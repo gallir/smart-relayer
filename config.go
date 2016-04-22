@@ -9,10 +9,9 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		proto:   "tcp",
-		host:    "127.0.0.1",
-		port:    6389,
-		handler: NewDefaultHandler(),
+		proto: "tcp",
+		host:  "127.0.0.1",
+		port:  6389,
 	}
 }
 

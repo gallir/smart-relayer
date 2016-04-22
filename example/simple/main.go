@@ -1,7 +1,7 @@
 package main
 
 import (
-	redis "github.com/docker/go-redis-server"
+	redis "github.com/gallir/go-bulk-relayer"
 )
 
 func main() {

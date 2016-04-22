@@ -10,7 +10,7 @@ import (
 )
 
 func parseRequest(conn io.ReadCloser) (*Request, error) {
-	var request bytes.Buffer
+	var buffer bytes.Buffer
 
 	r := bufio.NewReader(conn)
 	// first line of redis request should be:
@@ -19,7 +19,7 @@ func parseRequest(conn io.ReadCloser) (*Request, error) {
 	if err != nil {
 		return nil, err
 	}
-	request.WriteString(line)
+	buffer.WriteString(line)
 	// note that this line also protects us from negative integers
 	var argsCount int
 
@@ -33,29 +33,28 @@ func parseRequest(conn io.ReadCloser) (*Request, error) {
 		//$<number of bytes of argument 1> CR LF
 		//<argument data> CR LF
 		// first argument is a command name, so just convert
-		firstArg, err := readArgument(r, &request)
+		firstArg, err := readArgument(r, &buffer)
 		fmt.Printf("First: %q\n", firstArg)
 		if err != nil {
 			return nil, err
 		}
 
-		args := make([][]byte, argsCount-1)
 		for i := 0; i < argsCount-1; i += 1 {
-			if args[i], err = readArgument(r, &request); err != nil {
+			if _, err = readArgument(r, &buffer); err != nil {
 				return nil, err
 			}
 		}
 
-		fmt.Printf("Request: %q\n", request.String())
+		fmt.Printf("Request: %q\n", buffer.String())
 
 		return &Request{
-			Name: strings.ToLower(string(firstArg)),
-			Args: args,
-			Body: conn,
+			Name:  strings.ToLower(string(firstArg)),
+			Bytes: buffer.Bytes(),
+			Body:  conn,
 		}, nil
 	}
 
-	request.WriteString(line)
+	buffer.WriteString(line)
 	// Inline request:
 	fields := strings.Split(strings.Trim(line, "\r\n"), " ")
 
@@ -65,24 +64,23 @@ func parseRequest(conn io.ReadCloser) (*Request, error) {
 			args = append(args, []byte(arg))
 		}
 	}
-	fmt.Println("Request buffer:", request)
 
 	return &Request{
-		Name: strings.ToLower(string(fields[0])),
-		Args: args,
-		Body: conn,
+		Name:  strings.ToLower(string(fields[0])),
+		Bytes: buffer.Bytes(),
+		Body:  conn,
 	}, nil
 
 }
 
-func readArgument(r *bufio.Reader, request *bytes.Buffer) ([]byte, error) {
+func readArgument(r *bufio.Reader, buffer *bytes.Buffer) ([]byte, error) {
 
 	line, err := r.ReadString('\n')
 	fmt.Printf("%q\n", line)
 	if err != nil {
 		return nil, malformed("$<argumentLength>", line)
 	}
-	request.WriteString(line)
+	buffer.WriteString(line)
 	var argSize int
 	if _, err := fmt.Sscanf(line, "$%d\r\n", &argSize); err != nil {
 		return nil, malformed("$<argumentSize>", line)
@@ -91,7 +89,6 @@ func readArgument(r *bufio.Reader, request *bytes.Buffer) ([]byte, error) {
 	// I think int is safe here as the max length of request
 	// should be less then max int value?
 	data, err := ioutil.ReadAll(io.LimitReader(r, int64(argSize)))
-	fmt.Printf("DATA: [%q]\n", data)
 	if err != nil {
 		return nil, err
 	}
@@ -99,8 +96,6 @@ func readArgument(r *bufio.Reader, request *bytes.Buffer) ([]byte, error) {
 	if len(data) != argSize {
 		return nil, malformedLength(argSize, len(data))
 	}
-
-	request.Write(data)
 
 	// Now check for trailing CR
 	if b, err := r.ReadByte(); err != nil || b != '\r' {
@@ -112,8 +107,8 @@ func readArgument(r *bufio.Reader, request *bytes.Buffer) ([]byte, error) {
 		return nil, malformedMissingCRLF()
 	}
 
-	request.WriteString("\r\n")
-
+	buffer.Write(data)
+	buffer.WriteString("\r\n")
 	return data, nil
 }
 

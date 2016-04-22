@@ -9,14 +9,20 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
-	"reflect"
 )
+
+type Request struct {
+	Name    string
+	Bytes   []byte
+	Command []byte
+	Host    string
+	Body    io.ReadCloser
+}
 
 type Server struct {
 	Proto        string
 	Addr         string // TCP address to listen on, ":6389" if empty
 	MonitorChans []chan string
-	methods      map[string]HandlerFn
 }
 
 func (srv *Server) ListenAndServe() error {
@@ -62,12 +68,9 @@ func (srv *Server) ServeClient(conn net.Conn) (err error) {
 		conn.Close()
 	}()
 
-	clientChan := make(chan struct{})
-
 	// Read on `conn` in order to detect client disconnect
 	go func() {
 		// Close chan in order to trigger eventual selects
-		defer close(clientChan)
 		defer Debugf("Client disconnected")
 		// FIXME: move conn within the request.
 		if false {
@@ -95,13 +98,12 @@ func (srv *Server) ServeClient(conn net.Conn) (err error) {
 		}
 		fmt.Println("Request:", request)
 		request.Host = clientAddr
-		request.ClientChan = clientChan
-		reply, err := srv.Apply(request)
-		fmt.Println("reply:", reply)
+		reply := []byte("+OK\r\n")
+
 		if err != nil {
 			return err
 		}
-		if _, err = reply.WriteTo(conn); err != nil {
+		if _, err = conn.Write(reply); err != nil {
 			return err
 		}
 	}
@@ -112,7 +114,6 @@ func NewServer(c *Config) (*Server, error) {
 	srv := &Server{
 		Proto:        c.proto,
 		MonitorChans: []chan string{},
-		methods:      make(map[string]HandlerFn),
 	}
 
 	if srv.Proto == "unix" {
@@ -121,22 +122,5 @@ func NewServer(c *Config) (*Server, error) {
 		srv.Addr = fmt.Sprintf("%s:%d", c.host, c.port)
 	}
 
-	if c.handler == nil {
-		c.handler = NewDefaultHandler()
-	}
-
-	rh := reflect.TypeOf(c.handler)
-	for i := 0; i < rh.NumMethod(); i++ {
-		method := rh.Method(i)
-		if method.Name[0] > 'a' && method.Name[0] < 'z' {
-			continue
-		}
-		println(method.Name)
-		handlerFn, err := srv.createHandlerFn(c.handler, &method.Func)
-		if err != nil {
-			return nil, err
-		}
-		srv.Register(method.Name, handlerFn)
-	}
 	return srv, nil
 }
