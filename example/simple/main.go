@@ -1,11 +1,9 @@
 package main
 
-import (
-	redis "github.com/gallir/go-bulk-relayer"
-)
+import relayer "github.com/gallir/go-bulk-relayer"
 
 func main() {
-	server, err := redis.NewServer(redis.DefaultConfig())
+	server, err := relayer.NewServer(relayer.DefaultConfig())
 	if err != nil {
 		panic(err)
 	}

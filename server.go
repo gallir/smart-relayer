@@ -2,27 +2,25 @@
 // This could be an alternate implementation of redis, a custom proxy to redis,
 // or even a completely different backend capable of "masquerading" its API as a redis database.
 
-package redis
+package relayer
 
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
+	"log"
 	"net"
 )
 
 type Request struct {
-	Name    string
-	Bytes   []byte
-	Command []byte
-	Host    string
-	Body    io.ReadCloser
+	Name  string
+	Bytes []byte
+	Host  string
+	Body  io.ReadCloser
 }
 
 type Server struct {
-	Proto        string
-	Addr         string // TCP address to listen on, ":6389" if empty
-	MonitorChans []chan string
+	Proto string
+	Addr  string // TCP address to listen on, ":6389" if empty
 }
 
 func (srv *Server) ListenAndServe() error {
@@ -47,35 +45,27 @@ func (srv *Server) ListenAndServe() error {
 // then call srv.Handler to reply to them.
 func (srv *Server) Serve(l net.Listener) error {
 	defer l.Close()
-	srv.MonitorChans = []chan string{}
+	clt, _ := NewClient()
+	//clt.Connect()
+	go clt.Listen()
 	for {
 		rw, err := l.Accept()
 		if err != nil {
 			return err
 		}
-		go srv.ServeClient(rw)
+		go srv.ServeClient(rw, clt)
 	}
 }
 
 // Serve starts a new redis session, using `conn` as a transport.
 // It reads commands using the redis protocol, passes them to `handler`,
 // and returns the result.
-func (srv *Server) ServeClient(conn net.Conn) (err error) {
+func (srv *Server) ServeClient(conn net.Conn, clt *Client) (err error) {
 	defer func() {
 		if err != nil {
 			fmt.Fprintf(conn, "-%s\n", err)
 		}
 		conn.Close()
-	}()
-
-	// Read on `conn` in order to detect client disconnect
-	go func() {
-		// Close chan in order to trigger eventual selects
-		defer Debugf("Client disconnected")
-		// FIXME: move conn within the request.
-		if false {
-			io.Copy(ioutil.Discard, conn)
-		}
 	}()
 
 	var clientAddr string
@@ -90,30 +80,56 @@ func (srv *Server) ServeClient(conn net.Conn) (err error) {
 	default:
 		clientAddr = co.RemoteAddr().String()
 	}
+	fmt.Println("New connection from", clientAddr)
 
 	for {
 		request, err := parseRequest(conn)
 		if err != nil {
 			return err
 		}
-		fmt.Println("Request:", request)
-		request.Host = clientAddr
-		reply := []byte("+OK\r\n")
+		var reply string
+		relay := false
+		switch request.Name {
+		case
+			"set",
+			"hset",
+			"del",
+			"decr",
+			"decrby",
+			"expire",
+			"expireat",
+			"flushall",
+			"flushdb",
+			"geoadd",
+			"hdel",
+			"setbit",
+			"setex",
+			"setnx",
+			"smove":
+			reply = "+OK\r\n"
+			relay = true
+		case "ping":
+			reply = "+PONG\r\n"
+		default:
+			reply = "-Error: Command not accepted\r\n"
+			log.Printf("Error: command not accepted %q\n", request.Name)
 
-		if err != nil {
+		}
+
+		request.Host = clientAddr
+
+		if _, err = conn.Write([]byte(reply)); err != nil {
 			return err
 		}
-		if _, err = conn.Write(reply); err != nil {
-			return err
+		if relay {
+			clt.Channel <- request
 		}
 	}
-	return nil
 }
 
 func NewServer(c *Config) (*Server, error) {
 	srv := &Server{
-		Proto:        c.proto,
-		MonitorChans: []chan string{},
+		Proto: c.proto,
 	}
 
 	if srv.Proto == "unix" {

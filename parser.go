@@ -1,4 +1,4 @@
-package redis
+package relayer
 
 import (
 	"bufio"
@@ -23,7 +23,6 @@ func parseRequest(conn io.ReadCloser) (*Request, error) {
 	// note that this line also protects us from negative integers
 	var argsCount int
 
-	fmt.Printf("%q\n", line)
 	// Multiline request:
 	if line[0] == '*' {
 		if _, err := fmt.Sscanf(line, "*%d\r\n", &argsCount); err != nil {
@@ -34,21 +33,17 @@ func parseRequest(conn io.ReadCloser) (*Request, error) {
 		//<argument data> CR LF
 		// first argument is a command name, so just convert
 		firstArg, err := readArgument(r, &buffer)
-		fmt.Printf("First: %q\n", firstArg)
 		if err != nil {
 			return nil, err
 		}
 
-		for i := 0; i < argsCount-1; i += 1 {
+		for i := 0; i < argsCount-1; i++ {
 			if _, err = readArgument(r, &buffer); err != nil {
 				return nil, err
 			}
 		}
-
-		fmt.Printf("Request: %q\n", buffer.String())
-
 		return &Request{
-			Name:  strings.ToLower(string(firstArg)),
+			Name:  strings.ToLower(string(firstArg)[0 : len(firstArg)-2]),
 			Bytes: buffer.Bytes(),
 			Body:  conn,
 		}, nil
@@ -57,13 +52,6 @@ func parseRequest(conn io.ReadCloser) (*Request, error) {
 	buffer.WriteString(line)
 	// Inline request:
 	fields := strings.Split(strings.Trim(line, "\r\n"), " ")
-
-	var args [][]byte
-	if len(fields) > 1 {
-		for _, arg := range fields[1:] {
-			args = append(args, []byte(arg))
-		}
-	}
 
 	return &Request{
 		Name:  strings.ToLower(string(fields[0])),
@@ -76,7 +64,6 @@ func parseRequest(conn io.ReadCloser) (*Request, error) {
 func readArgument(r *bufio.Reader, buffer *bytes.Buffer) ([]byte, error) {
 
 	line, err := r.ReadString('\n')
-	fmt.Printf("%q\n", line)
 	if err != nil {
 		return nil, malformed("$<argumentLength>", line)
 	}
@@ -88,27 +75,22 @@ func readArgument(r *bufio.Reader, buffer *bytes.Buffer) ([]byte, error) {
 
 	// I think int is safe here as the max length of request
 	// should be less then max int value?
-	data, err := ioutil.ReadAll(io.LimitReader(r, int64(argSize)))
+	data, err := ioutil.ReadAll(io.LimitReader(r, int64(argSize)+2))
 	if err != nil {
 		return nil, err
 	}
+	dataLen := len(data)
 
-	if len(data) != argSize {
-		return nil, malformedLength(argSize, len(data))
+	if dataLen != argSize+2 {
+		return nil, malformedLength(argSize, dataLen)
 	}
 
 	// Now check for trailing CR
-	if b, err := r.ReadByte(); err != nil || b != '\r' {
-		return nil, malformedMissingCRLF()
-	}
-
-	// And LF
-	if b, err := r.ReadByte(); err != nil || b != '\n' {
+	if data[dataLen-2] != '\r' || data[dataLen-1] != '\n' {
 		return nil, malformedMissingCRLF()
 	}
 
 	buffer.Write(data)
-	buffer.WriteString("\r\n")
 	return data, nil
 }
 

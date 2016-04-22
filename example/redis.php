@@ -1,14 +1,48 @@
 <?PHP
 
 $cli = phpiredis_connect("localhost", 6389);
+//$cli = phpiredis_connect("localhost", 6379);
 
-var_dump($cli);
+$value = randString(400000);
 
-$key = "KEY__1";
-$value = base64_encode(serialize(array(1, 2, 4, 5, 6, 7, 2, 23 ,22)));
-
-phpiredis_command_bs($cli, array("SET", $key, $value, "PX", "2000"));
+$start = microtime(True);
+for ($i = 0; $i<1000; $i++) {
+    $key = randString(32);
+    $response = phpiredis_command_bs($cli, array("PING"));
+    if ($response != "PONG" && $response != "OK") {
+        print("Error in PING\n");
+        exit(1);
+    }
+    $response = phpiredis_command_bs($cli, array("SET", $key, $value, "PX", "2000"));
+    if ($response != "OK") {
+        printf("Error in SET %s\n", $response);
+        exit(1);
+    }
+    $response = phpiredis_command_bs($cli, array("HSET", "ROW", $key, $value));
+    if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
+        printf("Error in HSET %s\n", $response);
+        exit(1);
+    }
+    $response = phpiredis_command_bs($cli, array("HDEL", "ROW", $key));
+    if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
+        printf("Error in HDEL %s\n", $response);
+        exit(1);
+    }
+}
+$elapsed = microtime(True)-$start;
+printf("Elapsed %.2f\n", $elapsed);
 // phpiredis_command_bs($cli, array("HSET", "KKK", $key, $value));
-$command = "HSET {ROW} {$key} ";
-$command .= '"' . base64_encode(serialize($value)) . '"';
-// phpiredis_command($cli, $command);
+// $command = "HSET {ROW} {$key} ";
+// $command .= '"' . base64_encode(serialize($value)) . '"';
+// echo phpiredis_command($cli, $command);
+// echo "\n";
+
+function randString($maxLen) {
+    $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    $randomString = '';
+    $len = strlen($characters);
+    for ($i = 0; $i < $maxLen; $i++) {
+        $randomString .= $characters[rand(0, $len - 1)];
+    }
+    return $randomString;
+}
