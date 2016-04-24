@@ -1,4 +1,4 @@
-package relayer
+package redis
 
 type Config struct {
 	proto   string

@@ -86,6 +86,6 @@ func (cn *Conn) Close() error {
 	return cn.NetConn.Close()
 }
 
-func (cn *Conn) Receive(parser func(*Conn) ([]byte, error)) ([]byte, error) {
+func (cn *Conn) Receive() ([]byte, error) {
 	return cn.Parser(cn)
 }

@@ -1,11 +1,13 @@
-package relayer
+package redis
 
 import (
 	"fmt"
 	"strconv"
+
+	"github.com/gallir/go-bulk-relayer"
 )
 
-func readReply(c *Conn) ([]byte, error) {
+func parser(c *relayer.Conn) ([]byte, error) {
 	line, err := c.ReadLine()
 	var bytes []byte
 
@@ -41,7 +43,7 @@ func readReply(c *Conn) ([]byte, error) {
 		}
 		bytes = append(bytes, line...)
 		for i := 0; i < n; i++ {
-			r, err := readReply(c)
+			r, err := parser(c)
 			if err != nil {
 				return nil, malformed("*<numberOfArguments>", string(line))
 			}
@@ -58,7 +60,7 @@ func readReply(c *Conn) ([]byte, error) {
 }
 
 func malformed(expected string, got string) error {
-	Debugf("Mailformed request:'%s does not match %s\\r\\n'", got, expected)
+	relayer.Debugf("Mailformed request:'%s does not match %s\\r\\n'", got, expected)
 	return fmt.Errorf("Mailformed request:'%s does not match %s\\r\\n'", got, expected)
 }
 

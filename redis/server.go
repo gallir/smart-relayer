@@ -1,13 +1,11 @@
-// go-redis-server is a helper library for building server software capable of speaking the redis protocol.
-// This could be an alternate implementation of redis, a custom proxy to redis,
-// or even a completely different backend capable of "masquerading" its API as a redis database.
-
-package relayer
+package redis
 
 import (
 	"fmt"
 	"io"
 	"net"
+
+	"github.com/gallir/go-bulk-relayer"
 )
 
 type Request struct {
@@ -39,9 +37,7 @@ func (srv *Server) ListenAndServe() error {
 	return srv.Serve(l)
 }
 
-// Serve accepts incoming connections on the Listener l, creating a
-// new service goroutine for each.  The service goroutines read requests and
-// then call srv.Handler to reply to them.
+// Serve accepts incoming connections on the Listener l
 func (srv *Server) Serve(l net.Listener) error {
 	defer l.Close()
 	//clt, _ := NewClient()
@@ -49,7 +45,7 @@ func (srv *Server) Serve(l net.Listener) error {
 	//go clt.Listen()
 	for {
 		netConn, err := l.Accept()
-		conn := NewConn(netConn, readReply)
+		conn := relayer.NewConn(netConn, parser)
 		if err != nil {
 			return err
 		}
@@ -58,7 +54,7 @@ func (srv *Server) Serve(l net.Listener) error {
 }
 
 // Serve starts a new redis session, using `conn` as a transport.
-func (srv *Server) ServeClient(conn *Conn) (err error) {
+func (srv *Server) ServeClient(conn *relayer.Conn) (err error) {
 	defer func() {
 		if err != nil {
 			fmt.Fprintf(conn, "-%s\n", err)
@@ -69,7 +65,7 @@ func (srv *Server) ServeClient(conn *Conn) (err error) {
 	fmt.Println("New connection from", conn.RemoteAddr())
 
 	for {
-		_, err := conn.Receive(readReply) //( readReply(conn)
+		_, err := conn.Receive()
 		if err != nil {
 			return err
 		}
