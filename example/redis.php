@@ -10,7 +10,7 @@ for ($i = 0; $i<1000; $i++) {
     $key = randString(32);
     $response = phpiredis_command_bs($cli, array("PING"));
     if ($response != "PONG" && $response != "OK") {
-        print("Error in PING\n");
+        print("Error in PING $response\n");
         exit(1);
     }
     $response = phpiredis_command_bs($cli, array("SET", $key, $value, "PX", "2000"));

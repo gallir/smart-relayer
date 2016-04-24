@@ -7,7 +7,6 @@ package relayer
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 )
 
@@ -45,22 +44,23 @@ func (srv *Server) ListenAndServe() error {
 // then call srv.Handler to reply to them.
 func (srv *Server) Serve(l net.Listener) error {
 	defer l.Close()
-	clt, _ := NewClient()
+	//clt, _ := NewClient()
 	//clt.Connect()
-	go clt.Listen()
+	//go clt.Listen()
 	for {
-		rw, err := l.Accept()
+		netConn, err := l.Accept()
+		conn := NewConn(netConn)
 		if err != nil {
 			return err
 		}
-		go srv.ServeClient(rw, clt)
+		go srv.ServeClient(conn)
 	}
 }
 
 // Serve starts a new redis session, using `conn` as a transport.
 // It reads commands using the redis protocol, passes them to `handler`,
 // and returns the result.
-func (srv *Server) ServeClient(conn net.Conn, clt *Client) (err error) {
+func (srv *Server) ServeClient(conn *Conn) (err error) {
 	defer func() {
 		if err != nil {
 			fmt.Fprintf(conn, "-%s\n", err)
@@ -68,62 +68,54 @@ func (srv *Server) ServeClient(conn net.Conn, clt *Client) (err error) {
 		conn.Close()
 	}()
 
-	var clientAddr string
-
-	switch co := conn.(type) {
-	case *net.UnixConn:
-		f, err := conn.(*net.UnixConn).File()
-		if err != nil {
-			return err
-		}
-		clientAddr = f.Name()
-	default:
-		clientAddr = co.RemoteAddr().String()
-	}
-	fmt.Println("New connection from", clientAddr)
+	fmt.Println("New connection from", conn.RemoteAddr())
 
 	for {
-		request, err := parseRequest(conn)
+		_, err := readReply(conn)
 		if err != nil {
 			return err
 		}
-		var reply string
-		relay := false
-		switch request.Name {
-		case
-			"set",
-			"hset",
-			"del",
-			"decr",
-			"decrby",
-			"expire",
-			"expireat",
-			"flushall",
-			"flushdb",
-			"geoadd",
-			"hdel",
-			"setbit",
-			"setex",
-			"setnx",
-			"smove":
-			reply = "+OK\r\n"
-			relay = true
-		case "ping":
-			reply = "+PONG\r\n"
-		default:
-			reply = "-Error: Command not accepted\r\n"
-			log.Printf("Error: command not accepted %q\n", request.Name)
+		// fmt.Printf("Request %q\n", request)
+		conn.Write([]byte("+OK\r\n"))
+		/*
+			var reply string
+			relay := false
+			switch request.Name {
+			case
+				"set",
+				"hset",
+				"del",
+				"decr",
+				"decrby",
+				"expire",
+				"expireat",
+				"flushall",
+				"flushdb",
+				"geoadd",
+				"hdel",
+				"setbit",
+				"setex",
+				"setnx",
+				"smove":
+				reply = "+OK\r\n"
+				relay = true
+			case "ping":
+				reply = "+PONG\r\n"
+			default:
+				reply = "-Error: Command not accepted\r\n"
+				log.Printf("Error: command not accepted %q\n", request.Name)
 
-		}
+			}
 
-		request.Host = clientAddr
+			//		request.Host = clientAddr
 
-		if _, err = conn.Write([]byte(reply)); err != nil {
-			return err
-		}
-		if relay {
-			clt.Channel <- request
-		}
+			if _, err = conn.Write([]byte(reply)); err != nil {
+				return err
+			}
+			if relay {
+				//			clt.Channel <- request
+			}
+		*/
 	}
 }
 
