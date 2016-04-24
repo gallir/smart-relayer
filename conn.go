@@ -13,6 +13,7 @@ var noDeadline = time.Time{}
 
 type Conn struct {
 	NetConn net.Conn
+	Parser  func(*Conn) ([]byte, error)
 	Rd      *bufio.Reader
 	Buf     []byte
 
@@ -23,12 +24,12 @@ type Conn struct {
 	WriteTimeout time.Duration
 }
 
-func NewConn(netConn net.Conn) *Conn {
+func NewConn(netConn net.Conn, parser func(*Conn) ([]byte, error)) *Conn {
 	cn := &Conn{
 		NetConn: netConn,
 		Buf:     make([]byte, defaultBufSize),
-
-		UsedAt: time.Now(),
+		UsedAt:  time.Now(),
+		Parser:  parser,
 	}
 	cn.Rd = bufio.NewReader(cn)
 	return cn
@@ -83,4 +84,8 @@ func (cn *Conn) ReadN(n int) ([]byte, error) {
 
 func (cn *Conn) Close() error {
 	return cn.NetConn.Close()
+}
+
+func (cn *Conn) Receive(parser func(*Conn) ([]byte, error)) ([]byte, error) {
+	return cn.Parser(cn)
 }

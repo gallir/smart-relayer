@@ -49,7 +49,7 @@ func (srv *Server) Serve(l net.Listener) error {
 	//go clt.Listen()
 	for {
 		netConn, err := l.Accept()
-		conn := NewConn(netConn)
+		conn := NewConn(netConn, readReply)
 		if err != nil {
 			return err
 		}
@@ -58,8 +58,6 @@ func (srv *Server) Serve(l net.Listener) error {
 }
 
 // Serve starts a new redis session, using `conn` as a transport.
-// It reads commands using the redis protocol, passes them to `handler`,
-// and returns the result.
 func (srv *Server) ServeClient(conn *Conn) (err error) {
 	defer func() {
 		if err != nil {
@@ -71,7 +69,7 @@ func (srv *Server) ServeClient(conn *Conn) (err error) {
 	fmt.Println("New connection from", conn.RemoteAddr())
 
 	for {
-		_, err := readReply(conn)
+		_, err := conn.Receive(readReply) //( readReply(conn)
 		if err != nil {
 			return err
 		}
