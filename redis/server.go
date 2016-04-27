@@ -16,8 +16,9 @@ type Request struct {
 }
 
 type Server struct {
-	Proto string
-	Addr  string // TCP address to listen on, ":6389" if empty
+	Proto  string
+	Addr   string // TCP address to listen on, ":6389" if empty
+	client *Client
 }
 
 func (srv *Server) ListenAndServe() error {
@@ -40,9 +41,10 @@ func (srv *Server) ListenAndServe() error {
 // Serve accepts incoming connections on the Listener l
 func (srv *Server) Serve(l net.Listener) error {
 	defer l.Close()
-	//clt, _ := NewClient()
-	//clt.Connect()
-	//go clt.Listen()
+
+	srv.client, _ = NewClient()
+	go srv.client.Listen()
+
 	for {
 		netConn, err := l.Accept()
 		conn := relayer.NewConn(netConn, parser)
@@ -59,18 +61,20 @@ func (srv *Server) ServeClient(conn *relayer.Conn) (err error) {
 		if err != nil {
 			fmt.Fprintf(conn, "-%s\n", err)
 		}
-		conn.Close()
+		srv.client.Exit()
 	}()
 
 	fmt.Println("New connection from", conn.RemoteAddr())
 
 	for {
-		_, err := conn.Receive()
+		req, err := conn.Receive()
 		if err != nil {
 			return err
 		}
 		// fmt.Printf("Request %q\n", request)
 		conn.Write([]byte("+OK\r\n"))
+		//srv.client.Write(req)
+		srv.client.Channel <- req
 		/*
 			var reply string
 			relay := false

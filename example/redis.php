@@ -1,7 +1,7 @@
 <?PHP
 
-$cli = phpiredis_connect("localhost", 6389);
 //$cli = phpiredis_connect("localhost", 6379);
+$cli = phpiredis_connect("192.168.111.2", 6379);
 
 $value = randString(400000);
 
