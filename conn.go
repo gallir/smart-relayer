@@ -40,7 +40,7 @@ func (cn *Conn) IsStale(timeout time.Duration) bool {
 }
 
 func (cn *Conn) Read(b []byte) (int, error) {
-	// cn.UsedAt = time.Now()
+	cn.UsedAt = time.Now()
 	if cn.ReadTimeout != 0 {
 		cn.NetConn.SetReadDeadline(cn.UsedAt.Add(cn.ReadTimeout))
 	} else {
@@ -50,7 +50,7 @@ func (cn *Conn) Read(b []byte) (int, error) {
 }
 
 func (cn *Conn) Write(b []byte) (int, error) {
-	//		cn.UsedAt = time.Now()
+	cn.UsedAt = time.Now()
 	if cn.WriteTimeout != 0 {
 		cn.NetConn.SetWriteDeadline(cn.UsedAt.Add(cn.WriteTimeout))
 	} else {

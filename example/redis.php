@@ -1,12 +1,12 @@
 <?PHP
 
-//$cli = phpiredis_connect("localhost", 6379);
-$cli = phpiredis_connect("192.168.111.2", 6379);
+$cli = phpiredis_connect("localhost", 6389);
+//$cli = phpiredis_connect("192.168.111.2", 6379);
 
 $value = randString(400000);
 
 $start = microtime(True);
-for ($i = 0; $i<1000; $i++) {
+for ($i = 0; $i<1; $i++) {
     $key = randString(32);
     $response = phpiredis_command_bs($cli, array("PING"));
     if ($response != "PONG" && $response != "OK") {

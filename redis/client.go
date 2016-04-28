@@ -11,14 +11,16 @@ import (
 
 const (
 	connectionRetries = 3
-	pipelineCommands  = 100
+	pipelineCommands  = 1000
+	pingPeriod        = 3 * time.Second
 )
 
 type Client struct {
-	Proto   string
-	Addr    string // TCP address to listen on, ":6389" if empty
-	Conn    *relayer.Conn
-	Channel chan []byte
+	Proto     string
+	Addr      string // TCP address to listen on, ":6389" if empty
+	Conn      *relayer.Conn
+	Channel   chan []byte
+	pipelined int
 }
 
 func NewClient() (*Client, error) {
@@ -38,23 +40,46 @@ func NewClient() (*Client, error) {
 	}
 
 	clt.Channel = make(chan []byte, 4096)
-	clt.Connect()
 	defer clt.Close()
+
+	clt.Connect()
+	go clt.pinger()
 
 	return clt, nil
 }
 
+func (clt *Client) pinger() {
+	for {
+		if clt.Conn != nil {
+			log.Println(time.Since(clt.Conn.UsedAt), clt.Conn.UsedAt)
+		} else {
+			log.Println("conn is nil")
+		}
+		if clt.Channel == nil {
+			break
+		}
+		if clt.Conn != nil && time.Since(clt.Conn.UsedAt) > pingPeriod {
+			log.Println("ping", time.Since(clt.Conn.UsedAt), clt.Conn.UsedAt)
+			clt.Channel <- protoPing
+		}
+		time.Sleep(pingPeriod)
+	}
+	log.Println("Redis pinger exited")
+
+}
+
 func (clt *Client) Connect() bool {
-	clt.Conn = nil
 	conn, err := net.Dial(clt.Proto, clt.Addr)
 	if err != nil {
 		log.Println("Failed to connect to", clt.Addr, err)
+		clt.Conn = nil
 		return false
 	}
 	fmt.Println("Connected to", conn.RemoteAddr())
 	clt.Conn = relayer.NewConn(conn, parser)
 	clt.Conn.ReadTimeout = time.Second * 15
 	clt.Conn.WriteTimeout = time.Second * 15
+	clt.pipelined = 0
 	return true
 }
 
@@ -74,40 +99,42 @@ func (clt *Client) Listen() {
 			clt.Close()
 			continue
 		}
+		// clt.readAll()
 
 		if clt.pipeline() {
-			clt.Conn.Receive()
+			clt.readAll()
+		} else {
+			clt.Close()
 		}
 	}
-	fmt.Println("Finished session", time.Since(started))
+	fmt.Println("Finished Redis client", time.Since(started))
 }
 
 func (clt *Client) pipeline() bool {
-	pipelined := 0
 	for i := 0; i < pipelineCommands; i++ {
 		select {
 		case request := <-clt.Channel:
 			_, err := clt.Write(request)
 			if err != nil {
-				log.Println("Error writing in pipeline", pipelined, err)
+				log.Println("Error writing in pipeline", clt.pipelined, err)
 				return false
 			}
-			pipelined++
 		default:
 			break
 		}
 	}
-	/*
-		if pipelined > 0 {
-			fmt.Println("Pipelined:", pipelined)
-		}
-	*/
-	for i := 0; i < pipelined; i++ {
-		_, err := clt.Conn.Receive()
+	return clt.readAll()
+}
+
+func (clt *Client) readAll() bool {
+	for clt.pipelined > 0 {
+		b, err := clt.Conn.Receive()
+		log.Println("received", string(b))
 		if err != nil {
-			log.Println("Error receiving in pipeline", err)
+			log.Println("Error receiving in readAll", err)
 			return false
 		}
+		clt.pipelined--
 	}
 	return true
 }
@@ -119,11 +146,15 @@ func (clt *Client) Write(b []byte) (int, error) {
 				continue
 			}
 		}
+		log.Println("Write bytes", len(b))
 		c, err := clt.Conn.Write(b)
 		if err != nil {
 			clt.Close()
-			log.Println("Failed in write:", err)
+			if neterr, ok := err.(net.Error); !ok || !neterr.Timeout() {
+				log.Println("Failed in write:", err)
+			}
 		} else {
+			clt.pipelined++
 			return c, err
 		}
 	}
@@ -134,6 +165,7 @@ func (clt *Client) Close() {
 	if clt.Conn != nil {
 		clt.Conn.Close()
 		clt.Conn = nil
+		clt.pipelined = 0
 	}
 }
 

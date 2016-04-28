@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 
 	"github.com/gallir/go-bulk-relayer"
 )
@@ -20,6 +21,13 @@ type Server struct {
 	Addr   string // TCP address to listen on, ":6389" if empty
 	client *Client
 }
+
+var (
+	protoOK   = []byte("+OK\r\n")
+	protoPing = []byte("PING\r\n")
+	protoPong = []byte("+PONG\r\n")
+	protoKO   = []byte("-Error\r\n")
+)
 
 func (srv *Server) ListenAndServe() error {
 	addr := srv.Addr
@@ -41,6 +49,7 @@ func (srv *Server) ListenAndServe() error {
 // Serve accepts incoming connections on the Listener l
 func (srv *Server) Serve(l net.Listener) error {
 	defer l.Close()
+	defer srv.client.Exit()
 
 	srv.client, _ = NewClient()
 	go srv.client.Listen()
@@ -61,18 +70,19 @@ func (srv *Server) ServeClient(conn *relayer.Conn) (err error) {
 		if err != nil {
 			fmt.Fprintf(conn, "-%s\n", err)
 		}
-		srv.client.Exit()
 	}()
 
 	fmt.Println("New connection from", conn.RemoteAddr())
+	started := time.Now()
 
 	for {
 		req, err := conn.Receive()
 		if err != nil {
+			fmt.Println("Finished session", time.Since(started), err)
 			return err
 		}
 		// fmt.Printf("Request %q\n", request)
-		conn.Write([]byte("+OK\r\n"))
+		conn.Write(protoOK)
 		//srv.client.Write(req)
 		srv.client.Channel <- req
 		/*
