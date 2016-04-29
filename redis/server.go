@@ -23,10 +23,12 @@ type Server struct {
 }
 
 var (
-	protoOK   = []byte("+OK\r\n")
-	protoPing = []byte("PING\r\n")
-	protoPong = []byte("+PONG\r\n")
-	protoKO   = []byte("-Error\r\n")
+	protoOK                    = []byte("+OK\r\n")
+	protoPing                  = []byte("PING\r\n")
+	protoPong                  = []byte("+PONG\r\n")
+	protoKO                    = []byte("-Error\r\n")
+	protoClientCloseConnection = []byte("CLOSE")
+	protoClientExit            = []byte("EXIT")
 )
 
 func (srv *Server) ListenAndServe() error {
@@ -72,57 +74,34 @@ func (srv *Server) ServeClient(conn *relayer.Conn) (err error) {
 		}
 	}()
 
-	fmt.Println("New connection from", conn.RemoteAddr())
+	relayer.Debugf("New connection from %s\n", conn.RemoteAddr())
 	started := time.Now()
 
 	for {
 		req, err := conn.Receive()
 		if err != nil {
-			fmt.Println("Finished session", time.Since(started), err)
+			relayer.Debugf("Finished session %s\n", time.Since(started))
 			return err
 		}
-		// fmt.Printf("Request %q\n", request)
 		conn.Write(protoOK)
-		//srv.client.Write(req)
 		srv.client.Channel <- req
 		/*
-			var reply string
-			relay := false
-			switch request.Name {
-			case
-				"set",
-				"hset",
-				"del",
-				"decr",
-				"decrby",
-				"expire",
-				"expireat",
-				"flushall",
-				"flushdb",
-				"geoadd",
-				"hdel",
-				"setbit",
-				"setex",
-				"setnx",
-				"smove":
-				reply = "+OK\r\n"
-				relay = true
-			case "ping":
-				reply = "+PONG\r\n"
-			default:
-				reply = "-Error: Command not accepted\r\n"
-				log.Printf("Error: command not accepted %q\n", request.Name)
+			"set",
+			"hset",
+			"del",
+			"decr",
+			"decrby",
+			"expire",
+			"expireat",
+			"flushall",
+			"flushdb",
+			"geoadd",
+			"hdel",
+			"setbit",
+			"setex",
+			"setnx",
+			"smove":
 
-			}
-
-			//		request.Host = clientAddr
-
-			if _, err = conn.Write([]byte(reply)); err != nil {
-				return err
-			}
-			if relay {
-				//			clt.Channel <- request
-			}
 		*/
 	}
 }
