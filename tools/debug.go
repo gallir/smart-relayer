@@ -1,4 +1,4 @@
-package relayer
+package tools
 
 import (
 	"fmt"

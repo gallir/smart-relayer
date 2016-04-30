@@ -2,24 +2,24 @@ package redis
 
 import (
 	"fmt"
-	"io"
+	"log"
 	"net"
 	"time"
 
-	"github.com/gallir/go-bulk-relayer"
+	"github.com/gallir/go-bulk-relayer/tools"
 )
 
 type Request struct {
-	Name  string
-	Bytes []byte
-	Host  string
-	Body  io.ReadCloser
+	Conn    *Conn
+	Command string
+	Bytes   []byte
+	Channel chan *Request
 }
 
 type Server struct {
-	Proto  string
-	Addr   string // TCP address to listen on, ":6389" if empty
+	config *tools.RelayerConfig
 	client *Client
+	done   chan bool
 }
 
 var (
@@ -27,95 +27,83 @@ var (
 	protoPing                  = []byte("PING\r\n")
 	protoPong                  = []byte("+PONG\r\n")
 	protoKO                    = []byte("-Error\r\n")
-	protoClientCloseConnection = []byte("CLOSE")
-	protoClientExit            = []byte("EXIT")
+	protoClientCloseConnection = Request{Bytes: []byte("CLOSE")}
+	protoClientExit            = Request{Bytes: []byte("EXIT")}
 )
 
-func (srv *Server) ListenAndServe() error {
-	addr := srv.Addr
-	if srv.Proto == "" {
-		srv.Proto = "tcp"
-	}
-	if srv.Proto == "unix" && addr == "" {
-		addr = "/tmp/redis.sock"
-	} else if addr == "" {
-		addr = ":6389"
-	}
-	l, e := net.Listen(srv.Proto, addr)
+// Serve accepts incoming connections on the Listener l
+func (srv *Server) Serve() error {
+	l, e := net.Listen("tcp", fmt.Sprintf(":%d", srv.config.Listen))
 	if e != nil {
+		log.Println("Error listening to port", fmt.Sprintf(":%d", srv.config.Listen), e)
 		return e
 	}
-	return srv.Serve(l)
-}
 
-// Serve accepts incoming connections on the Listener l
-func (srv *Server) Serve(l net.Listener) error {
-	defer l.Close()
-	defer srv.client.Exit()
+	log.Println("Starting redis server at port", srv.config.Listen)
+	go func() {
+		defer func() {
+			l.Close()
+			srv.client.Exit()
+			srv.done <- true
+		}()
 
-	srv.client, _ = NewClient()
-	go srv.client.Listen()
+		srv.client, _ = NewClient(srv)
+		go srv.client.Listen()
 
-	for {
-		netConn, err := l.Accept()
-		conn := relayer.NewConn(netConn, parser)
-		if err != nil {
-			return err
+		for {
+			netConn, err := l.Accept()
+			conn := NewConn(netConn)
+			if err != nil {
+				return
+			}
+			go srv.serveClient(conn)
 		}
-		go srv.ServeClient(conn)
-	}
+	}()
+
+	return nil
 }
 
-// Serve starts a new redis session, using `conn` as a transport.
-func (srv *Server) ServeClient(conn *relayer.Conn) (err error) {
+func (srv *Server) serveClient(conn *Conn) (err error) {
 	defer func() {
 		if err != nil {
 			fmt.Fprintf(conn, "-%s\n", err)
 		}
+
 	}()
 
-	relayer.Debugf("New connection from %s\n", conn.RemoteAddr())
+	tools.Debugf("New connection from %s\n", conn.RemoteAddr())
+	responseCh := make(chan *Request, 1)
 	started := time.Now()
 
 	for {
-		req, err := conn.Receive()
+		req := Request{Conn: conn}
+		_, err := conn.Parse(&req)
 		if err != nil {
-			relayer.Debugf("Finished session %s\n", time.Since(started))
+			tools.Debugf("Finished session %s\n", time.Since(started))
 			return err
 		}
-		conn.Write(protoOK)
-		srv.client.Channel <- req
-		/*
-			"set",
-			"hset",
-			"del",
-			"decr",
-			"decrby",
-			"expire",
-			"expireat",
-			"flushall",
-			"flushdb",
-			"geoadd",
-			"hdel",
-			"setbit",
-			"setex",
-			"setnx",
-			"smove":
-
-		*/
+		response, ok := commands[req.Command]
+		if ok {
+			conn.Write(response)
+			srv.client.channel <- &req
+		} else {
+			req.Channel = responseCh
+			fmt.Println("Waiting for response")
+			/*
+				srv.client.channel <- &req
+				response := <-responseCh
+				conn.Write(response.Bytes)
+			*/
+			conn.Write(protoOK)
+			srv.client.channel <- &req
+		}
 	}
 }
 
-func NewServer(c *Config) (*Server, error) {
+func New(c *tools.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
-		Proto: c.proto,
+		config: c,
+		done:   done,
 	}
-
-	if srv.Proto == "unix" {
-		srv.Addr = c.host
-	} else {
-		srv.Addr = fmt.Sprintf("%s:%d", c.host, c.port)
-	}
-
 	return srv, nil
 }

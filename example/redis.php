@@ -1,41 +1,51 @@
 <?PHP
 
-$cli = phpiredis_connect("localhost", 6389);
+$redis = new Redis();
+$redis->connect('127.0.0.1', 6389);
+
+$real_redis = new Redis();
+$real_redis->connect('127.0.0.1', 6379);
+//$cli = phpiredis_connect("localhost", 6389);
 //$cli = phpiredis_connect("192.168.111.2", 6379);
 
-$value = randString(100000);
+$value = randString(10);
 
 $start = microtime(True);
-for ($i = 0; $i<1000; $i++) {
+for ($i = 0; $i<1; $i++) {
     $key = randString(32);
-    $response = phpiredis_command_bs($cli, array("PING"));
-    if ($response != "PONG" && $response != "OK") {
+
+    $response = $redis->ping();
+    if ($response != "+PONG" && $response != "+OK") {
         print("Error in PING $response\n");
         exit(1);
     }
-    $response = phpiredis_command_bs($cli, array("SET", $key, $value, "PX", "2000"));
-    if ($response != "OK") {
+
+    $response = $redis->select(1);
+    if ($response === False && $response != "+OK") {
+        print("Error in SELECT $response\n");
+        exit(1);
+    }
+
+    $response = $redis->set($key, $value, 10);
+    if ($response === False) {
         printf("Error in SET %s\n", $response);
         exit(1);
     }
-    $response = phpiredis_command_bs($cli, array("HSET", "ROW", $key, $value));
-    if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-        printf("Error in HSET %s\n", $response);
-        exit(1);
-    }
-    $response = phpiredis_command_bs($cli, array("HDEL", "ROW", $key));
-    if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-        printf("Error in HDEL %s\n", $response);
-        exit(1);
-    }
+    $response = $redis->get($key);
+    var_dump($response);
+
+    $response = $redis->del($key); // Return false (:1)
+
+    $response = $redis->hSet("ROW", $key, $value); // Return false (:1)
+    //usleep(100);
+    //$response = $real_redis->hGet("ROW", $key);
+    //var_dump($response);
+
+    $response = $redis->hDel("ROW", $key); // Return false (:1)
 }
 $elapsed = microtime(True)-$start;
 printf("Elapsed %.2f\n", $elapsed);
-// phpiredis_command_bs($cli, array("HSET", "KKK", $key, $value));
-// $command = "HSET {ROW} {$key} ";
-// $command .= '"' . base64_encode(serialize($value)) . '"';
-// echo phpiredis_command($cli, $command);
-// echo "\n";
+
 
 function randString($maxLen) {
     $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';

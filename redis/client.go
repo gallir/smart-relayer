@@ -7,7 +7,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/gallir/go-bulk-relayer"
+	"github.com/gallir/go-bulk-relayer/tools"
 )
 
 const (
@@ -17,30 +17,19 @@ const (
 )
 
 type Client struct {
-	Proto     string
-	Addr      string // TCP address to listen on, ":6389" if empty
-	Conn      *relayer.Conn
-	Channel   chan []byte
+	server    *Server
+	conn      *Conn
+	channel   chan *Request
+	database  int
 	pipelined int
 }
 
-func NewClient() (*Client, error) {
-	proto := "tcp"
-	//addr := "127.0.0.1"
-	addr := "192.168.111.2"
-	port := 6379
-
+func NewClient(s *Server) (*Client, error) {
 	clt := &Client{
-		Proto: "tcp",
+		server: s,
 	}
 
-	if proto == "unix" {
-		clt.Addr = addr
-	} else {
-		clt.Addr = fmt.Sprintf("%s:%d", addr, port)
-	}
-
-	clt.Channel = make(chan []byte, 4096)
+	clt.channel = make(chan *Request, 4096)
 	defer clt.Close()
 
 	return clt, nil
@@ -48,27 +37,27 @@ func NewClient() (*Client, error) {
 
 func (clt *Client) checkIdle() {
 	for {
-		if clt.Channel == nil {
+		if clt.channel == nil {
 			break
 		}
-		if clt.Conn != nil && time.Since(clt.Conn.UsedAt) > connectionIdleMax {
-			clt.Channel <- protoClientCloseConnection
+		if clt.conn != nil && time.Since(clt.conn.UsedAt) > connectionIdleMax {
+			clt.channel <- &protoClientCloseConnection
 		}
 		time.Sleep(connectionIdleMax)
 	}
 }
 
 func (clt *Client) Connect() bool {
-	conn, err := net.Dial(clt.Proto, clt.Addr)
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", clt.server.config.Host, clt.server.config.Port))
 	if err != nil {
-		log.Println("Failed to connect to", clt.Addr, err)
-		clt.Conn = nil
+		log.Println("Failed to connect to", clt.server.config.Host, clt.server.config.Port)
+		clt.conn = nil
 		return false
 	}
-	relayer.Debugf("Connected to %s\n", conn.RemoteAddr())
-	clt.Conn = relayer.NewConn(conn, parser)
-	clt.Conn.ReadTimeout = time.Second * 10
-	clt.Conn.WriteTimeout = time.Second * 10
+	tools.Debugf("Connected to %s\n", conn.RemoteAddr())
+	clt.conn = NewConn(conn)
+	clt.conn.ReadTimeout = time.Second * 10
+	clt.conn.WriteTimeout = time.Second * 10
 	clt.pipelined = 0
 	return true
 }
@@ -79,12 +68,12 @@ func (clt *Client) Listen() {
 	go clt.checkIdle()
 
 	for {
-		request := <-clt.Channel
-		if bytes.Compare(request, protoClientExit) == 0 {
+		request := <-clt.channel
+		if bytes.Compare(request.Bytes, protoClientExit.Bytes) == 0 {
 			break
 		}
-		if bytes.Compare(request, protoClientCloseConnection) == 0 {
-			relayer.Debugf("Closing by idle %s\n", clt.Conn.RemoteAddr())
+		if bytes.Compare(request.Bytes, protoClientCloseConnection.Bytes) == 0 {
+			tools.Debugf("Closing by idle %s\n", clt.conn.RemoteAddr())
 			clt.Close()
 			continue
 		}
@@ -107,7 +96,7 @@ func (clt *Client) Listen() {
 func (clt *Client) pipeline() bool {
 	for i := 0; i < pipelineCommands; i++ {
 		select {
-		case request := <-clt.Channel:
+		case request := <-clt.channel:
 			_, err := clt.Write(request)
 			if err != nil {
 				log.Println("Error writing in pipeline", clt.pipelined, err)
@@ -121,8 +110,10 @@ func (clt *Client) pipeline() bool {
 }
 
 func (clt *Client) readAll() bool {
+	var req Request
 	for clt.pipelined > 0 {
-		_, err := clt.Conn.Receive()
+		resp, err := clt.conn.Parse(&req)
+		fmt.Println("response", string(resp))
 		if err != nil {
 			log.Println("Error receiving in readAll", err)
 			return false
@@ -132,9 +123,9 @@ func (clt *Client) readAll() bool {
 	return true
 }
 
-func (clt *Client) Write(b []byte) (int, error) {
+func (clt *Client) Write(r *Request) (int, error) {
 	for i := 0; i < connectionRetries; i++ {
-		if clt.Conn == nil {
+		if clt.conn == nil {
 			if i > 0 {
 				time.Sleep(time.Duration(i*2) * time.Second)
 			}
@@ -142,7 +133,20 @@ func (clt *Client) Write(b []byte) (int, error) {
 				continue
 			}
 		}
-		c, err := clt.Conn.Write(b)
+
+		log.Println("Databse", r.Conn.Database, clt.database)
+		if clt.database != r.Conn.Database {
+			fmt.Println("changed database to", r.Conn.Database)
+			_, err := clt.conn.Write(getSelect(r.Conn.Database))
+			if err != nil {
+				log.Println("Error changing database", err)
+				clt.Close()
+				return 0, fmt.Errorf("Error in select")
+			}
+			clt.database = r.Conn.Database
+		}
+		c, err := clt.conn.Write(r.Bytes)
+
 		if err != nil {
 			clt.Close()
 			if neterr, ok := err.(net.Error); !ok || !neterr.Timeout() {
@@ -157,14 +161,15 @@ func (clt *Client) Write(b []byte) (int, error) {
 }
 
 func (clt *Client) Close() {
-	if clt.Conn != nil {
-		clt.Conn.Close()
-		clt.Conn = nil
+	if clt.conn != nil {
+		clt.conn.Close()
+		clt.conn = nil
 		clt.pipelined = 0
+		clt.database = 0
 	}
 }
 
 func (clt *Client) Exit() {
 	clt.Close()
-	clt.Channel <- protoClientExit
+	clt.channel <- &protoClientExit
 }
