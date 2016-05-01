@@ -26,10 +26,10 @@ Smart-relay uses only a persistent connection for every target so no time is spe
 It can listen to several local ports for different targets. It support two modes:
 
 #### Synchronized (working)
-It doesn't execute command in background, all commands block the client. The only optimization is pipelining commands from different clients.
+It doesn't execute command in background, all commands block the client. The only optimization is the pipelining of commands coming from different clients.
 
 #### Smart (working)
-It allows to send command and data asynchronously, smart-relayer detects the commands that can be executed in "background" and sends a response to the client immediately and continue sending the commands to the server in another thread.
+It allows to send command and data asynchronously, smart-relayer detects the commands that can be executed in "background" and immediately responds to the client and continue sending the commands to the server in another thread.
 
 The first tests show promising results.
 
