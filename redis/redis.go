@@ -29,13 +29,12 @@ type Server struct {
 // Client is the thread that connect to the remote redis server
 type Client struct {
 	sync.Mutex
-	server       *Server
-	conn         *Conn
-	channel      chan *Request // The server sends the requests via this channel
-	database     int           // The current selected database
-	pipelined    int
-	queued       *list.List // The list of unanswered request
-	listenerQuit chan bool  // To signal the listener thread
+	server        *Server
+	conn          *Conn
+	channel       chan *Request // The server sends the requests via this channel
+	database      int           // The current selected database
+	queued        *list.List    // The list of unanswered request
+	listenerReady chan bool     // To signal the listener thread to read answers
 }
 
 const (

@@ -35,7 +35,7 @@ The first tests show promising results.
 
 For example the PHP script https://github.com/gallir/smart-relayer/blob/master/example/redis_noget.php takes 7.1 secs to execute a remote server, with smart-cache takes 0.4 secs (yes! the number is right). Executing in two parallel process the take in average 8.2 secs and 2.2 secs respectively (limited by my laptop's CPU).
 
-The script that does "blocking" GET's in every cycle (https://github.com/gallir/smart-relayer/blob/master/example/redis.php) without smart-relayer takes 9.9 secs and with smart-cache 4.7 secs on average. Two PHP processes in parallel take 10.7 secs and 5.7 secs respectively.
+The script that does "blocking" GET's in every cycle (https://github.com/gallir/smart-relayer/blob/master/example/redis.php) without smart-relayer takes 9.9 secs and with smart-cache 4.7 secs on average. Two PHP processes in parallel take 10.7 secs and 5.5 secs respectively.
 
 ## Usage
 

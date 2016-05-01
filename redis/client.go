@@ -49,8 +49,7 @@ func (clt *Client) Connect() bool {
 	clt.conn = NewConn(conn)
 	clt.conn.ReadTimeout = time.Second * 10
 	clt.conn.WriteTimeout = time.Second * 10
-	clt.pipelined = 0
-	clt.listenerQuit = make(chan bool, 1)
+	clt.listenerReady = make(chan bool, pipelineCommands)
 	clt.Unlock()
 	go clt.netListener()
 	return true
@@ -78,86 +77,64 @@ func (clt *Client) Listen() {
 			clt.Close()
 			continue
 		}
-		if !clt.pipeline() {
-			clt.Close()
-		}
 	}
 	log.Println("Finished Redis client", time.Since(started))
 }
 
-func (clt *Client) pipeline() bool {
-	for i := 0; i < pipelineCommands; i++ {
-		select {
-		case request := <-clt.channel:
-			_, err := clt.Write(request)
-			if err != nil {
-				log.Println("Error writing in pipeline", clt.pipelined, err)
-				return false
-			}
-		default:
-			break
-		}
-	}
-	return true
-}
-
 // This gotoutine listen for incoming answers from the Redis server
 func (clt *Client) netListener() {
+	ready := clt.listenerReady
+	if clt.conn == nil || ready == nil {
+		log.Println("Net listener not starting, nil values")
+		return
+	}
 	for {
-		conn := clt.conn // Saveguard, copy to avoid nil un readAll()
+		if clt.conn == nil ||
+			clt.listenerReady == nil || clt.listenerReady != ready {
+			log.Println("Net listener exiting, connection has changed")
+			return
+		}
+		doWork := <-ready
+		if !doWork {
+			tools.Debugf("Net listener exiting")
+			return
+		}
+		conn := clt.conn // Safeguard, copy to avoid nil in receive()
 		if conn == nil {
 			log.Println("Net listener exiting, conn is nil")
 			return
 		}
-		_, e := clt.readAll(conn)
-		select {
-		case _ = <-clt.listenerQuit:
-			tools.Debugf("Net listener exiting")
-			return
-		default:
-			if e != nil {
-				log.Println("Error in listener", e)
-			}
-			continue
+		_, e := clt.receive(conn)
+		if e != nil {
+			log.Println("Error in listener", e)
 		}
 	}
 }
 
-func (clt *Client) readAll(conn *Conn) (bool, error) {
-	for clt.pipelined > 0 {
-		req := Request{}
-		resp, err := conn.Parse(&req, false)
-		if err != nil {
-			return false, nil
-		}
+func (clt *Client) receive(conn *Conn) (bool, error) {
+	req := Request{}
+	resp, err := conn.Parse(&req, false)
+	if err != nil {
+		return false, err
+	}
 
-		// There is a race condition if we receive an answer before the writer
-		// added the element to the list. So we try it again
-		var q *list.Element
-		for i := 0; i < 3; i++ {
-			clt.Lock()
-			q = clt.queued.Front()
-			if q != nil {
-				clt.queued.Remove(q)
-				clt.Unlock()
-				break
-			}
-			clt.Unlock()
-			time.Sleep(10 * time.Millisecond)
-		}
-		if q != nil {
-			r := q.Value
-			switch r := r.(type) {
-			default:
-				log.Printf("unexpected type %T\n", r) // %T prints whatever type t has
-			case *Request:
-				if r.Channel != nil {
-					r.Channel <- resp
-				}
+	var q *list.Element
+	clt.Lock()
+	q = clt.queued.Front()
+	if q != nil {
+		clt.queued.Remove(q)
+	}
+	clt.Unlock()
+	if q != nil {
+		r := q.Value
+		switch r := r.(type) {
+		default:
+			log.Printf("unexpected type %T\n", r) // %T prints whatever type t has
+		case *Request:
+			if r.Channel != nil {
+				r.Channel <- resp
 			}
 		}
-
-		clt.pipelined--
 	}
 	return true, nil
 }
@@ -202,10 +179,10 @@ func (clt *Client) Write(r *Request) (int, error) {
 				log.Println("Failed in write:", err)
 			}
 		} else {
-			clt.pipelined++
 			clt.Lock()
 			clt.queued.PushBack(r)
 			clt.Unlock()
+			clt.listenerReady <- true
 			return c, err
 		}
 	}
@@ -214,17 +191,18 @@ func (clt *Client) Write(r *Request) (int, error) {
 
 func (clt *Client) Close() {
 	clt.Lock()
-	if clt.listenerQuit != nil {
+	if clt.listenerReady != nil {
 		select {
-		case clt.listenerQuit <- true:
+		case clt.listenerReady <- false:
+			tools.Debugf("Signalig listener to quit")
 		default:
+			tools.Debugf("Couldn't signal to listener")
 		}
 	}
 	conn := clt.conn
 	clt.conn = nil
 	if conn != nil {
 		conn.Close()
-		clt.pipelined = 0
 		clt.database = 0
 		clt.queued.Init()
 	}
