@@ -17,7 +17,7 @@ The main application is very complex and huge, more than one million lines in PH
 
 It will support several protocols, Redis is the first and the mode "smart" is already working. The next modules will be HTTP based cache and storage servers (like ElasticSearch) and Memcache.
 
-Smart-relay can listen to different local ports, each one for a specific protocol and target. The clients connect always to the same port using the same client libraries, only the address of the server has to be changed to point to localhost:SOME_PORT. 
+Smart-relay can listen to different local ports, each one for a specific protocol and target. The clients connect always to the same port using the same client libraries, only the address of the server has to be changed to point to localhost:SOME_PORT.
 
 Smart-relay uses only a persistent connection for every target so no time is spent establishing the connection to the remote server even if the client libraries or the application don't support persistent connections.
 
@@ -31,11 +31,8 @@ It doesn't execute command in background, all commands block the client. The onl
 #### Smart (working)
 It allows to send command and data asynchronously, smart-relayer detects the commands that can be executed in "background" and sends a response to the client immediately and continue sending the commands to the server in another thread.
 
-The first tests show promising results. 
+The first tests show promising results.
 
 For example the PHP script https://github.com/gallir/smart-relayer/blob/master/example/redis_noget.php takes 7.1 secs to execute a remote server, with smart-cache takes 0.4 secs (yes! the number is right). Executing in two parallel process the take in average 8.2 secs and 2.2 secs respectively (limited by my laptop's CPU).
 
-The script that does "blocking" GET's in every cycle (https://github.com/gallir/smart-relayer/blob/master/example/redis.php) without smart-cache takes 11.2 ses and with smart-cache 6.6 secs. Two PHP processes in parallel take 12.3 secs and 9.9 secs respectively. 
-
-
-
+The script that does "blocking" GET's in every cycle (https://github.com/gallir/smart-relayer/blob/master/example/redis.php) without smart-relayer takes 9.9 secs and with smart-cache 4.7 secs on average. Two PHP processes in parallel take 10.7 secs and 5.7 secs respectively. 

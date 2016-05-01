@@ -3,6 +3,7 @@ package redis
 import (
 	"container/list"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gallir/smart-relayer/tools"
@@ -24,13 +25,14 @@ type Server struct {
 }
 
 type Client struct {
-	server    *Server
-	conn      *Conn
-	channel   chan *Request
-	database  int
-	pipelined int
-	queued    *list.List
-	serial    int
+	sync.Mutex
+	server       *Server
+	conn         *Conn
+	channel      chan *Request
+	database     int
+	pipelined    int
+	queued       *list.List
+	listenerQuit chan bool
 }
 
 const (

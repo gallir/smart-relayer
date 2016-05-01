@@ -49,7 +49,7 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 
 	}()
 
-	tools.Debugf("New connection from %s\n", conn.RemoteAddr())
+	tools.Debugf("New connection from %s", conn.RemoteAddr())
 	responseCh := make(chan []byte, 1)
 	started := time.Now()
 
@@ -57,7 +57,7 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 		req := Request{Conn: conn}
 		_, err := conn.Parse(&req, true)
 		if err != nil {
-			tools.Debugf("Finished session %s\n", time.Since(started))
+			tools.Debugf("Finished session %s", time.Since(started))
 			return err
 		}
 		req.Database = conn.Database

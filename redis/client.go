@@ -44,11 +44,15 @@ func (clt *Client) Connect() bool {
 		clt.conn = nil
 		return false
 	}
-	tools.Debugf("Connected to %s\n", conn.RemoteAddr())
+	tools.Debugf("Connected to %s", conn.RemoteAddr())
+	clt.Lock()
 	clt.conn = NewConn(conn)
 	clt.conn.ReadTimeout = time.Second * 10
 	clt.conn.WriteTimeout = time.Second * 10
 	clt.pipelined = 0
+	clt.listenerQuit = make(chan bool, 1)
+	clt.Unlock()
+	go clt.netListener()
 	return true
 }
 
@@ -63,7 +67,7 @@ func (clt *Client) Listen() {
 			break
 		}
 		if bytes.Compare(request.Bytes, protoClientCloseConnection.Bytes) == 0 {
-			tools.Debugf("Closing by idle %s\n", clt.conn.RemoteAddr())
+			tools.Debugf("Closing by idle %s:%d", clt.server.config.Host, clt.server.config.Port)
 			clt.Close()
 			continue
 		}
@@ -74,9 +78,7 @@ func (clt *Client) Listen() {
 			clt.Close()
 			continue
 		}
-		if clt.pipeline() {
-			clt.readAll()
-		} else {
+		if !clt.pipeline() {
 			clt.Close()
 		}
 	}
@@ -99,15 +101,49 @@ func (clt *Client) pipeline() bool {
 	return true
 }
 
-func (clt *Client) readAll() bool {
+func (clt *Client) netListener() {
+	for {
+		conn := clt.conn // Saveguard, copy to avoid nil un readAll()
+		if conn == nil {
+			log.Println("Net listener exiting, conn is nil")
+			return
+		}
+		_, e := clt.readAll(conn)
+		select {
+		case _ = <-clt.listenerQuit:
+			tools.Debugf("Net listener exiting")
+			return
+		default:
+			if e != nil {
+				log.Println("Error in listener", e)
+			}
+			continue
+		}
+	}
+}
+
+func (clt *Client) readAll(conn *Conn) (bool, error) {
 	for clt.pipelined > 0 {
 		req := Request{}
-		resp, err := clt.conn.Parse(&req, false)
+		resp, err := conn.Parse(&req, false)
 		if err != nil {
-			log.Println("\tError receiving in readAll", err)
-			return false
+			return false, nil
 		}
-		q := clt.queued.Front()
+
+		// There is a race condition if we receive an answer before the writer
+		// added the element to the list. So we try it again
+		var q *list.Element
+		for i := 0; i < 3; i++ {
+			clt.Lock()
+			q = clt.queued.Front()
+			if q != nil {
+				clt.queued.Remove(q)
+				clt.Unlock()
+				break
+			}
+			clt.Unlock()
+			time.Sleep(10 * time.Millisecond)
+		}
 		if q != nil {
 			r := q.Value
 			switch r := r.(type) {
@@ -118,12 +154,11 @@ func (clt *Client) readAll() bool {
 					r.Channel <- resp
 				}
 			}
-			clt.queued.Remove(q)
 		}
 
 		clt.pipelined--
 	}
-	return true
+	return true, nil
 }
 
 func (clt *Client) Write(r *Request) (int, error) {
@@ -167,8 +202,9 @@ func (clt *Client) Write(r *Request) (int, error) {
 			}
 		} else {
 			clt.pipelined++
-			clt.serial++
+			clt.Lock()
 			clt.queued.PushBack(r)
+			clt.Unlock()
 			return c, err
 		}
 	}
@@ -176,13 +212,22 @@ func (clt *Client) Write(r *Request) (int, error) {
 }
 
 func (clt *Client) Close() {
-	if clt.conn != nil {
-		clt.conn.Close()
-		clt.conn = nil
+	clt.Lock()
+	if clt.listenerQuit != nil {
+		select {
+		case clt.listenerQuit <- true:
+		default:
+		}
+	}
+	conn := clt.conn
+	clt.conn = nil
+	if conn != nil {
+		conn.Close()
 		clt.pipelined = 0
 		clt.database = 0
 		clt.queued.Init()
 	}
+	clt.Unlock()
 }
 
 func (clt *Client) Exit() {
