@@ -10,10 +10,13 @@ import (
 )
 
 type Request struct {
-	Conn    *Conn
-	Command string
-	Bytes   []byte
-	Channel chan *Request
+	Conn            *Conn
+	Command         string
+	Bytes           []byte
+	Channel         chan []byte // Channel to send the response to the original client
+	Database        int
+	serial          int
+	currentDatabase int
 }
 
 type Server struct {
@@ -72,30 +75,26 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 	}()
 
 	tools.Debugf("New connection from %s\n", conn.RemoteAddr())
-	responseCh := make(chan *Request, 1)
+	responseCh := make(chan []byte, 1)
 	started := time.Now()
 
 	for {
 		req := Request{Conn: conn}
-		_, err := conn.Parse(&req)
+		_, err := conn.Parse(&req, true)
 		if err != nil {
 			tools.Debugf("Finished session %s\n", time.Since(started))
 			return err
 		}
+		req.Database = conn.Database
 		response, ok := commands[req.Command]
 		if ok {
 			conn.Write(response)
 			srv.client.channel <- &req
 		} else {
 			req.Channel = responseCh
-			fmt.Println("Waiting for response")
-			/*
-				srv.client.channel <- &req
-				response := <-responseCh
-				conn.Write(response.Bytes)
-			*/
-			conn.Write(protoOK)
 			srv.client.channel <- &req
+			response := <-responseCh
+			conn.Write(response)
 		}
 	}
 }

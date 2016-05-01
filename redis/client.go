@@ -2,6 +2,7 @@ package redis
 
 import (
 	"bytes"
+	"container/list"
 	"fmt"
 	"log"
 	"net"
@@ -14,6 +15,7 @@ const (
 	connectionRetries = 3
 	pipelineCommands  = 1000
 	connectionIdleMax = 3 * time.Second
+	selectCommand     = "SELECT"
 )
 
 type Client struct {
@@ -22,6 +24,8 @@ type Client struct {
 	channel   chan *Request
 	database  int
 	pipelined int
+	queued    *list.List
+	serial    int
 }
 
 func NewClient(s *Server) (*Client, error) {
@@ -30,6 +34,7 @@ func NewClient(s *Server) (*Client, error) {
 	}
 
 	clt.channel = make(chan *Request, 4096)
+	clt.queued = list.New()
 	defer clt.Close()
 
 	return clt, nil
@@ -110,14 +115,27 @@ func (clt *Client) pipeline() bool {
 }
 
 func (clt *Client) readAll() bool {
-	var req Request
 	for clt.pipelined > 0 {
-		resp, err := clt.conn.Parse(&req)
-		fmt.Println("response", string(resp))
+		req := Request{}
+		resp, err := clt.conn.Parse(&req, false)
 		if err != nil {
-			log.Println("Error receiving in readAll", err)
+			log.Println("\tError receiving in readAll", err)
 			return false
 		}
+		q := clt.queued.Front()
+		if q != nil {
+			r := q.Value
+			switch r := r.(type) {
+			default:
+				log.Printf("unexpected type %T\n", r) // %T prints whatever type t has
+			case *Request:
+				if r.Channel != nil {
+					r.Channel <- resp
+				}
+			}
+			clt.queued.Remove(q)
+		}
+
 		clt.pipelined--
 	}
 	return true
@@ -134,17 +152,28 @@ func (clt *Client) Write(r *Request) (int, error) {
 			}
 		}
 
-		log.Println("Databse", r.Conn.Database, clt.database)
-		if clt.database != r.Conn.Database {
-			fmt.Println("changed database to", r.Conn.Database)
-			_, err := clt.conn.Write(getSelect(r.Conn.Database))
-			if err != nil {
-				log.Println("Error changing database", err)
-				clt.Close()
-				return 0, fmt.Errorf("Error in select")
+		if r.Command == selectCommand {
+			if clt.database == r.Database { // There is no need to select again
+				return 0, nil
 			}
-			clt.database = r.Conn.Database
+			clt.database = r.Database
+		} else {
+			if clt.database != r.Database {
+				databaseChanger := Request{
+					Command:         selectCommand,
+					Bytes:           getSelect(r.Database),
+					Conn:            r.Conn,
+					currentDatabase: r.Conn.Database,
+				}
+				_, err := clt.Write(&databaseChanger)
+				if err != nil {
+					log.Println("\tError changing database", err)
+					clt.Close()
+					return 0, fmt.Errorf("Error in select")
+				}
+			}
 		}
+		r.currentDatabase = clt.database
 		c, err := clt.conn.Write(r.Bytes)
 
 		if err != nil {
@@ -154,6 +183,9 @@ func (clt *Client) Write(r *Request) (int, error) {
 			}
 		} else {
 			clt.pipelined++
+			r.serial = clt.serial
+			clt.serial++
+			clt.queued.PushBack(r)
 			return c, err
 		}
 	}
@@ -166,6 +198,7 @@ func (clt *Client) Close() {
 		clt.conn = nil
 		clt.pipelined = 0
 		clt.database = 0
+		clt.queued.Init()
 	}
 }
 

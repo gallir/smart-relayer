@@ -11,6 +11,7 @@ func getSelect(n int) []byte {
 
 func init() {
 	commands = map[string][]byte{
+		"PING":   []byte("+PONG\r\n"),
 		"SET":    []byte("+OK\r\n"),
 		"SETEX":  []byte("+OK\r\n"),
 		"PSETEX": []byte("+OK\r\n"),

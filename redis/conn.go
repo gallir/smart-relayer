@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"time"
@@ -88,7 +89,7 @@ func (cn *Conn) Close() error {
 	return cn.NetConn.Close()
 }
 
-func (cn *Conn) Parse(r *Request) ([]byte, error) {
+func (cn *Conn) Parse(r *Request, parseCommand bool) ([]byte, error) {
 	line, err := cn.ReadLine()
 	if err != nil {
 		return nil, err
@@ -97,39 +98,39 @@ func (cn *Conn) Parse(r *Request) ([]byte, error) {
 		return nil, malformed("short response line", string(line))
 	}
 
-	// fmt.Println(string(line[:len(line)-2]))
-
 	switch line[0] {
 	case '+', '-', ':':
 		r.Bytes = line
 		return line, nil
 	case '$':
 		n, err := strconv.Atoi(string(line[1 : len(line)-2]))
-		if n < 0 || err != nil {
-			return nil, err
-		}
-		r.Bytes = append(r.Bytes, line...)
-		b, err := cn.ReadN(n + 2)
 		if err != nil {
 			return nil, err
 		}
-		// Now check for trailing CR
-		if b[len(b)-2] != '\r' || b[len(b)-1] != '\n' {
-			return nil, malformedMissingCRLF()
-		}
-		if r.Command == "" {
-			r.Command = string(b[:len(b)-2])
-			fmt.Println("command:", r.Command)
-		} else {
-			if r.Command == "SELECT" {
-				n, err = strconv.Atoi(string(b[0 : len(b)-2]))
-				if err == nil {
-					fmt.Println("SELECT DATABASE", n)
-					cn.Database = n
+		r.Bytes = append(r.Bytes, line...)
+		if n > 0 {
+			b, err := cn.ReadN(n + 2)
+			if err != nil {
+				return nil, err
+			}
+			// Now check for trailing CR
+			if b[len(b)-2] != '\r' || b[len(b)-1] != '\n' {
+				return nil, malformedMissingCRLF()
+			}
+			if parseCommand {
+				if r.Command == "" {
+					r.Command = string(b[:len(b)-2])
+				} else {
+					if r.Command == "SELECT" {
+						n, err = strconv.Atoi(string(b[0 : len(b)-2]))
+						if err == nil {
+							cn.Database = n
+						}
+					}
 				}
 			}
+			r.Bytes = append(r.Bytes, b...)
 		}
-		r.Bytes = append(r.Bytes, b...)
 		return r.Bytes, nil
 	case '*':
 		n, err := strconv.Atoi(string(line[1 : len(line)-2]))
@@ -138,7 +139,7 @@ func (cn *Conn) Parse(r *Request) ([]byte, error) {
 		}
 		r.Bytes = append(r.Bytes, line...)
 		for i := 0; i < n; i++ {
-			_, err := cn.Parse(r)
+			_, err := cn.Parse(r, parseCommand)
 			if err != nil {
 				return nil, malformed("*<numberOfArguments>", string(line))
 			}
@@ -149,6 +150,7 @@ func (cn *Conn) Parse(r *Request) ([]byte, error) {
 			return line, nil
 		}
 	}
+	log.Println("Empty line", string(line))
 	return nil, malformed("Empty line", string(line))
 
 }
