@@ -1,15 +1,15 @@
 
 # Smart relayer in Golang for cache servers
 
-Currently under heavy development, the first version implements a Redis module.
+Currently under heavy development, the first version implements the Redis module.
 
-Smart-relayer is a proxy that runs always in the clients' localhost. It listens for local connections for different protocols (currently supports Redis) and forwards the commands to the remote server. But the client doesn't have to wait until the operation is completed, smart-relayer detects commands that can be sent in "background" and responds to the client immediately to the last can continue its execution without waiting for a response from the remote server.
+Smart-relayer is a extremely light proxy daemon that runs always in the clients' localhost. It listens for local connections for different protocols (currently supports Redis) and forwards the commands to the remote server. But the client doesn't have to wait until the operation is completed, smart-relayer detects commands that can be sent in "background" and responds to the client immediately so the application can continue its execution without waiting for a response from the remote server.
 
 Furthermore, it optimizes the connection by pipelining commands when possible (as in Redis) and avoid unnecessary commands, for example "select database" in Redis when the current database is the same as the one being selected.
 
 ## Motivation
 
-My team at APSL.net is in charge of operations of a large size Amazon AWS platform. It receives more than 500 requests/sec, each one produces several megabytes of logs and hot data that have to be stored on several ElastiCache Redis and Memcache clusters. We wanted to reduce the latency in the clients and also reduce the number of network connection at every workers.
+My team at https://APSL.net is in charge of operations of a large size Amazon AWS platform. It receives more than 500 requests/sec, each one produces several megabytes of logs and hot data that have to be stored on several ElastiCache Redis and Memcache clusters. We wanted to reduce the latency in the clients and also reduce the number of network connections at every workers.
 
 The main application is very complex and huge, more than one million lines in PHP (that the reason the examples are in PHP, we have to test and validate this daemon against PHP Redis clients) and generates more the 50 MBytes of data for each request. So this smart-cache project is a first step to decouple the application from the burden of storing a huge volume of data in the cache clusters.
 
