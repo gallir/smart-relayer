@@ -25,7 +25,7 @@ Smart-relay uses only a persistent connection for every target so no time is spe
 ### Redis
 It can listen to several local ports for different targets. It support two modes:
 
-#### Synchronized (in progress)
+#### Synchronized (working)
 It doesn't execute command in background, all commands block the client. The only optimization is pipelining commands from different clients.
 
 #### Smart (working)
