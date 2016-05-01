@@ -17,8 +17,9 @@ var noDeadline = time.Time{}
 type Conn struct {
 	NetConn net.Conn
 	// Parser  func(*Conn) ([]byte, error)
-	Rd  *bufio.Reader
-	Buf []byte
+	Rd       *bufio.Reader
+	Buf      []byte
+	bufCount int
 
 	Inited bool
 	UsedAt time.Time
@@ -28,6 +29,10 @@ type Conn struct {
 
 	Database int
 }
+
+const (
+	maxBufCount = 100000 // To protect for very large buffer consuming lot of memory
+)
 
 func NewConn(netConn net.Conn) *Conn {
 	cn := &Conn{
@@ -67,20 +72,21 @@ func (cn *Conn) RemoteAddr() net.Addr {
 }
 
 func (cn *Conn) ReadLine() ([]byte, error) {
-	line, err := cn.Rd.ReadString('\n')
+	line, err := cn.Rd.ReadBytes('\n')
 	if err == nil {
-		return []byte(line), nil
+		return line, nil
 	}
 	return nil, err
 }
 
 func (cn *Conn) ReadN(n int) ([]byte, error) {
-	if d := n - cap(cn.Buf); d > 0 {
-		cn.Buf = cn.Buf[:cap(cn.Buf)]
-		cn.Buf = append(cn.Buf, make([]byte, d)...)
-	} else {
-		cn.Buf = cn.Buf[:n]
+	if cn.bufCount > maxBufCount || cap(cn.Buf) < n {
+		cn.Buf = make([]byte, n)
+		cn.bufCount = 0
 	}
+
+	cn.Buf = cn.Buf[:n]
+	cn.bufCount++
 	_, err := io.ReadFull(cn.Rd, cn.Buf)
 	return cn.Buf, err
 }

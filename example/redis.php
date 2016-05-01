@@ -1,8 +1,8 @@
 <?PHP
 
 $redis = new Redis();
-//$redis->connect('127.0.0.1', 6389);
-$redis->connect('192.168.0.149', 6379);
+$redis->connect('127.0.0.1', 6389);
+//$redis->connect('192.168.0.149', 6379);
 
 $value = randString(40000);
 

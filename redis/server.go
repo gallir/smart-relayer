@@ -61,23 +61,21 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 			return err
 		}
 		req.Database = conn.Database
-		response, ok := commands[req.Command]
-		if ok {
-			conn.Write(response)
-			srv.client.channel <- &req
-		} else {
-			req.Channel = responseCh
-			srv.client.channel <- &req
-			response := <-responseCh
-			conn.Write(response)
-		}
-	}
-}
 
-func New(c tools.RelayerConfig, done chan bool) (*Server, error) {
-	srv := &Server{
-		config: c,
-		done:   done,
+		// Smart mode, answer immediately and forget
+		if srv.Mode == modeSmart {
+			fastResponse, ok := commands[req.Command]
+			if ok {
+				conn.Write(fastResponse)
+				srv.client.channel <- &req
+				continue
+			}
+		}
+
+		// Synchronized mode
+		req.Channel = responseCh
+		srv.client.channel <- &req
+		response := <-responseCh
+		conn.Write(response)
 	}
-	return srv, nil
 }

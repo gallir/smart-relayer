@@ -19,6 +19,7 @@ type Request struct {
 type Server struct {
 	config tools.RelayerConfig
 	client *Client
+	Mode   int
 	done   chan bool
 }
 
@@ -37,6 +38,8 @@ const (
 	pipelineCommands  = 1000
 	connectionIdleMax = 3 * time.Second
 	selectCommand     = "SELECT"
+	modeSync          = 0
+	modeSmart         = 1
 )
 
 var (
@@ -74,4 +77,18 @@ func init() {
 		"PEXPIRE":   []byte(":1\r\n"),
 		"PEXPIREAT": []byte(":1\r\n"),
 	}
+}
+
+// New creates a new Redis server
+func New(c tools.RelayerConfig, done chan bool) (*Server, error) {
+	srv := &Server{
+		config: c,
+		done:   done,
+	}
+	if c.Mode == "smart" {
+		srv.Mode = modeSmart
+	} else {
+		srv.Mode = modeSync
+	}
+	return srv, nil
 }

@@ -13,7 +13,7 @@ type Config struct {
 
 type RelayerConfig struct {
 	Protocol string
-	Type     string
+	Mode     string
 	Listen   int
 	Host     string
 	Port     int

@@ -30,7 +30,7 @@ func (clt *Client) checkIdle() {
 		if clt.channel == nil {
 			break
 		}
-		if clt.conn != nil && time.Since(clt.conn.UsedAt) > connectionIdleMax {
+		if clt.conn != nil && clt.conn.IsStale(connectionIdleMax) {
 			clt.channel <- &protoClientCloseConnection
 		}
 		time.Sleep(connectionIdleMax)
@@ -96,7 +96,7 @@ func (clt *Client) pipeline() bool {
 			break
 		}
 	}
-	return clt.readAll()
+	return true
 }
 
 func (clt *Client) readAll() bool {
@@ -138,16 +138,17 @@ func (clt *Client) Write(r *Request) (int, error) {
 		}
 
 		if r.Command == selectCommand {
-			if clt.database == r.Database { // There is no need to select again
+			if clt.server.Mode == modeSmart && clt.database == r.Database { // There is no need to select again
 				return 0, nil
 			}
 			clt.database = r.Database
 		} else {
 			if clt.database != r.Database {
 				databaseChanger := Request{
-					Command: selectCommand,
-					Bytes:   getSelect(r.Database),
-					Conn:    r.Conn,
+					Command:  selectCommand,
+					Bytes:    getSelect(r.Database),
+					Conn:     r.Conn,
+					Database: r.Database,
 				}
 				_, err := clt.Write(&databaseChanger)
 				if err != nil {
