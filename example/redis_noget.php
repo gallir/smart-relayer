@@ -1,8 +1,8 @@
 <?PHP
 
 $redis = new Redis();
-//$redis->connect('127.0.0.1', 6389);
-$redis->connect('192.168.0.149', 6379);
+$redis->connect('127.0.0.1', 6389);
+//$redis->connect('192.168.0.149', 6379);
 
 $value = randString(40000);
 
@@ -16,38 +16,15 @@ for ($i = 0; $i<1000; $i++) {
         exit(1);
     }
 
-/*
-    $response = $redis->select(rand(1,15));
-    if ($response === False && $response != "+OK") {
-        print("Error in SELECT $response\n");
-        exit(1);
-    }
-*/
-
-    $redis->select(0);
     $response = $redis->set($key, $value, 600);
     if ($response === False) {
         printf("Error in SET %s %s\n", $response, $key);
         exit(1);
     }
 
+    $redis->hSet("ROW", $key, $value);
+    $redis->hDel("ROW", $key);
 
-    //$response = $redis->del($key); // Return false (:1)
-
-    $response = $redis->select(2);
-    if ($response === False && $response != "+OK") {
-        print("Error in SELECT $response\n");
-        exit(1);
-    }
-    $redis->hSet("ROW", $key, $value); // Return false (:1)
-    $redis->hDel("ROW", $key); // Return false (:1)
-
-
-    $redis->select(0);
-    $response = $redis->get($key);
-    if ($response != $value) {
-        print("Error in get $key\n");
-    }
     $redis->del($key, $value);
 }
 

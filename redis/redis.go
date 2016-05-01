@@ -17,7 +17,7 @@ type Request struct {
 }
 
 type Server struct {
-	config *tools.RelayerConfig
+	config tools.RelayerConfig
 	client *Client
 	done   chan bool
 }

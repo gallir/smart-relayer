@@ -28,7 +28,7 @@ func main() {
 	var config tools.Config
 	var configFileName string
 
-	flag.StringVar(&configFileName, "c", "relayer.conf", "Configuation filename")
+	flag.StringVar(&configFileName, "c", "relayer.conf", "Configuration filename")
 	flag.Parse()
 
 	tools.ReadConfig(configFileName, &config)
@@ -36,7 +36,7 @@ func main() {
 	for _, r := range config.Relayer {
 		switch r.Protocol {
 		case "redis":
-			srv, err := redis.New(&r, done)
+			srv, err := redis.New(r, done)
 			if err == nil {
 				if e := srv.Serve(); e == nil {
 					relayers++

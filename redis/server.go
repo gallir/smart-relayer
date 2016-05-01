@@ -17,7 +17,7 @@ func (srv *Server) Serve() error {
 		return e
 	}
 
-	log.Println("Starting redis server at port", srv.config.Listen)
+	log.Printf("Starting redis server at port %d for target %s:%d", srv.config.Listen, srv.config.Host, srv.config.Port)
 	go func() {
 		defer func() {
 			l.Close()
@@ -74,7 +74,7 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 	}
 }
 
-func New(c *tools.RelayerConfig, done chan bool) (*Server, error) {
+func New(c tools.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		config: c,
 		done:   done,

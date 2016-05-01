@@ -20,6 +20,8 @@ func NewClient(s *Server) (*Client, error) {
 	clt.queued = list.New()
 	defer clt.Close()
 
+	log.Printf("Client for target %s:%d ready", clt.server.config.Host, clt.server.config.Port)
+
 	return clt, nil
 }
 
