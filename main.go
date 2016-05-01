@@ -3,8 +3,8 @@ package main
 import (
 	"flag"
 
-	"github.com/gallir/go-bulk-relayer/redis"
-	"github.com/gallir/go-bulk-relayer/tools"
+	"github.com/gallir/smart-relayer/redis"
+	"github.com/gallir/smart-relayer/tools"
 )
 
 type Relayer interface {

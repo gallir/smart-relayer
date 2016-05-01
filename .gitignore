@@ -1,4 +1,4 @@
 *.test
 example/example
-example/simple/simple
-redis.conf
+smart-relayer
+

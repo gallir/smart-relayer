@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/gallir/go-bulk-relayer/tools"
+	"github.com/gallir/smart-relayer/tools"
 )
 
 // Serve accepts incoming connections on the Listener l

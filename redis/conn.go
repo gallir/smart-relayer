@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gallir/go-bulk-relayer/tools"
+	"github.com/gallir/smart-relayer/tools"
 )
 
 var noDeadline = time.Time{}
