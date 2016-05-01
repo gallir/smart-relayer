@@ -11,23 +11,6 @@ import (
 	"github.com/gallir/go-bulk-relayer/tools"
 )
 
-const (
-	connectionRetries = 3
-	pipelineCommands  = 1000
-	connectionIdleMax = 3 * time.Second
-	selectCommand     = "SELECT"
-)
-
-type Client struct {
-	server    *Server
-	conn      *Conn
-	channel   chan *Request
-	database  int
-	pipelined int
-	queued    *list.List
-	serial    int
-}
-
 func NewClient(s *Server) (*Client, error) {
 	clt := &Client{
 		server: s,

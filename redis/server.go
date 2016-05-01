@@ -19,21 +19,6 @@ type Request struct {
 	currentDatabase int
 }
 
-type Server struct {
-	config *tools.RelayerConfig
-	client *Client
-	done   chan bool
-}
-
-var (
-	protoOK                    = []byte("+OK\r\n")
-	protoPing                  = []byte("PING\r\n")
-	protoPong                  = []byte("+PONG\r\n")
-	protoKO                    = []byte("-Error\r\n")
-	protoClientCloseConnection = Request{Bytes: []byte("CLOSE")}
-	protoClientExit            = Request{Bytes: []byte("EXIT")}
-)
-
 // Serve accepts incoming connections on the Listener l
 func (srv *Server) Serve() error {
 	l, e := net.Listen("tcp", fmt.Sprintf(":%d", srv.config.Listen))
