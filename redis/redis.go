@@ -9,14 +9,16 @@ import (
 	"github.com/gallir/smart-relayer/tools"
 )
 
+// It stores the data for each client request
 type Request struct {
 	Conn     *Conn
 	Command  string
 	Bytes    []byte
 	Channel  chan []byte // Channel to send the response to the original client
-	Database int
+	Database int         // The current database at the time the request was issued
 }
 
+// Server is the thread that listen for clients' connections
 type Server struct {
 	config tools.RelayerConfig
 	client *Client
@@ -24,15 +26,16 @@ type Server struct {
 	done   chan bool
 }
 
+// Client is the thread that connect to the remote redis server
 type Client struct {
 	sync.Mutex
 	server       *Server
 	conn         *Conn
-	channel      chan *Request
-	database     int
+	channel      chan *Request // The server sends the requests via this channel
+	database     int           // The current selected database
 	pipelined    int
-	queued       *list.List
-	listenerQuit chan bool
+	queued       *list.List // The list of unanswered request
+	listenerQuit chan bool  // To signal the listener thread
 }
 
 const (
@@ -61,6 +64,8 @@ func getSelect(n int) []byte {
 }
 
 func init() {
+	// These are the commands that can be sent in "background" when in smart mode
+	// The values are the immediate responses to the clients
 	commands = map[string][]byte{
 		"PING":   []byte("+PONG\r\n"),
 		"SET":    []byte("+OK\r\n"),

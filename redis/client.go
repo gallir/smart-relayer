@@ -101,6 +101,7 @@ func (clt *Client) pipeline() bool {
 	return true
 }
 
+// This gotoutine listen for incoming answers from the Redis server
 func (clt *Client) netListener() {
 	for {
 		conn := clt.conn // Saveguard, copy to avoid nil un readAll()
