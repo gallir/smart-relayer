@@ -9,16 +9,6 @@ import (
 	"github.com/gallir/go-bulk-relayer/tools"
 )
 
-type Request struct {
-	Conn            *Conn
-	Command         string
-	Bytes           []byte
-	Channel         chan []byte // Channel to send the response to the original client
-	Database        int
-	serial          int
-	currentDatabase int
-}
-
 // Serve accepts incoming connections on the Listener l
 func (srv *Server) Serve() error {
 	l, e := net.Listen("tcp", fmt.Sprintf(":%d", srv.config.Listen))

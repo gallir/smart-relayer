@@ -8,18 +8,19 @@ import (
 	"github.com/gallir/go-bulk-relayer/tools"
 )
 
+type Request struct {
+	Conn     *Conn
+	Command  string
+	Bytes    []byte
+	Channel  chan []byte // Channel to send the response to the original client
+	Database int
+}
+
 type Server struct {
 	config *tools.RelayerConfig
 	client *Client
 	done   chan bool
 }
-
-const (
-	connectionRetries = 3
-	pipelineCommands  = 1000
-	connectionIdleMax = 3 * time.Second
-	selectCommand     = "SELECT"
-)
 
 type Client struct {
 	server    *Server
@@ -30,6 +31,13 @@ type Client struct {
 	queued    *list.List
 	serial    int
 }
+
+const (
+	connectionRetries = 3
+	pipelineCommands  = 1000
+	connectionIdleMax = 3 * time.Second
+	selectCommand     = "SELECT"
+)
 
 var (
 	protoOK                    = []byte("+OK\r\n")

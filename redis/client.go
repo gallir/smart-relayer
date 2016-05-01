@@ -78,7 +78,7 @@ func (clt *Client) Listen() {
 			clt.Close()
 		}
 	}
-	fmt.Println("Finished Redis client", time.Since(started))
+	log.Println("Finished Redis client", time.Since(started))
 }
 
 func (clt *Client) pipeline() bool {
@@ -143,10 +143,9 @@ func (clt *Client) Write(r *Request) (int, error) {
 		} else {
 			if clt.database != r.Database {
 				databaseChanger := Request{
-					Command:         selectCommand,
-					Bytes:           getSelect(r.Database),
-					Conn:            r.Conn,
-					currentDatabase: r.Conn.Database,
+					Command: selectCommand,
+					Bytes:   getSelect(r.Database),
+					Conn:    r.Conn,
 				}
 				_, err := clt.Write(&databaseChanger)
 				if err != nil {
@@ -156,7 +155,6 @@ func (clt *Client) Write(r *Request) (int, error) {
 				}
 			}
 		}
-		r.currentDatabase = clt.database
 		c, err := clt.conn.Write(r.Bytes)
 
 		if err != nil {
@@ -166,7 +164,6 @@ func (clt *Client) Write(r *Request) (int, error) {
 			}
 		} else {
 			clt.pipelined++
-			r.serial = clt.serial
 			clt.serial++
 			clt.queued.PushBack(r)
 			return c, err
