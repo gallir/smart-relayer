@@ -44,7 +44,7 @@ func NewConn(netConn net.Conn) *Conn {
 	return cn
 }
 
-func (cn *Conn) IsStale(timeout time.Duration) bool {
+func (cn *Conn) isStale(timeout time.Duration) bool {
 	return timeout > 0 && time.Since(cn.UsedAt) > timeout
 }
 
@@ -68,11 +68,11 @@ func (cn *Conn) Write(b []byte) (int, error) {
 	return cn.NetConn.Write(b)
 }
 
-func (cn *Conn) RemoteAddr() net.Addr {
+func (cn *Conn) remoteAddr() net.Addr {
 	return cn.NetConn.RemoteAddr()
 }
 
-func (cn *Conn) ReadLine() ([]byte, error) {
+func (cn *Conn) readLine() ([]byte, error) {
 	line, err := cn.Rd.ReadBytes('\n')
 	if err == nil {
 		return line, nil
@@ -80,7 +80,7 @@ func (cn *Conn) ReadLine() ([]byte, error) {
 	return nil, err
 }
 
-func (cn *Conn) ReadN(n int) ([]byte, error) {
+func (cn *Conn) readN(n int) ([]byte, error) {
 	if cn.bufCount > maxBufCount || cap(cn.Buf) < n {
 		cn.Buf = make([]byte, n)
 		cn.bufCount = 0
@@ -92,12 +92,12 @@ func (cn *Conn) ReadN(n int) ([]byte, error) {
 	return cn.Buf, err
 }
 
-func (cn *Conn) Close() error {
+func (cn *Conn) close() error {
 	return cn.NetConn.Close()
 }
 
-func (cn *Conn) Parse(r *Request, parseCommand bool) ([]byte, error) {
-	line, err := cn.ReadLine()
+func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
+	line, err := cn.readLine()
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func (cn *Conn) Parse(r *Request, parseCommand bool) ([]byte, error) {
 		}
 		r.Bytes = append(r.Bytes, line...)
 		if n > 0 {
-			b, err := cn.ReadN(n + 2)
+			b, err := cn.readN(n + 2)
 			if err != nil {
 				return nil, err
 			}
@@ -146,7 +146,7 @@ func (cn *Conn) Parse(r *Request, parseCommand bool) ([]byte, error) {
 		}
 		r.Bytes = append(r.Bytes, line...)
 		for i := 0; i < n; i++ {
-			_, err := cn.Parse(r, parseCommand)
+			_, err := cn.parse(r, parseCommand)
 			if err != nil {
 				return nil, malformed("*<numberOfArguments>", string(line))
 			}

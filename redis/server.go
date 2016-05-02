@@ -49,13 +49,13 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 
 	}()
 
-	tools.Debugf("New connection from %s", conn.RemoteAddr())
+	tools.Debugf("New connection from %s", conn.remoteAddr())
 	responseCh := make(chan []byte, 1)
 	started := time.Now()
 
 	for {
 		req := Request{Conn: conn}
-		_, err = conn.Parse(&req, true)
+		_, err = conn.parse(&req, true)
 		if err != nil {
 			break
 		}

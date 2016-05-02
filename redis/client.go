@@ -18,9 +18,9 @@ func NewClient(s *Server) (*Client, error) {
 
 	clt.channel = make(chan *Request, requestBufferSize)
 	clt.queued = list.New()
-	defer clt.Close()
+	defer clt.close()
 
-	log.Printf("Client for target %s:%d ready", clt.server.config.Host, clt.server.config.Port)
+	tools.Debugf("Client for target %s:%d ready", clt.server.config.Host, clt.server.config.Port)
 
 	return clt, nil
 }
@@ -30,14 +30,14 @@ func (clt *Client) checkIdle() {
 		if clt.channel == nil {
 			break
 		}
-		if clt.conn != nil && clt.conn.IsStale(connectionIdleMax) {
+		if clt.conn != nil && clt.conn.isStale(connectionIdleMax) {
 			clt.channel <- &protoClientCloseConnection
 		}
 		time.Sleep(connectionIdleMax)
 	}
 }
 
-func (clt *Client) Connect() bool {
+func (clt *Client) connect() bool {
 	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", clt.server.config.Host, clt.server.config.Port))
 	if err != nil {
 		log.Println("Failed to connect to", clt.server.config.Host, clt.server.config.Port)
@@ -67,14 +67,14 @@ func (clt *Client) Listen() {
 		}
 		if bytes.Compare(request.Bytes, protoClientCloseConnection.Bytes) == 0 {
 			tools.Debugf("Closing by idle %s:%d", clt.server.config.Host, clt.server.config.Port)
-			clt.Close()
+			clt.close()
 			continue
 		}
 
-		_, err := clt.Write(request)
+		_, err := clt.write(request)
 		if err != nil {
 			log.Println("Error writing", err)
-			clt.Close()
+			clt.close()
 			continue
 		}
 	}
@@ -113,7 +113,7 @@ func (clt *Client) netListener() {
 
 func (clt *Client) receive(conn *Conn) (bool, error) {
 	req := Request{}
-	resp, err := conn.Parse(&req, false)
+	resp, err := conn.parse(&req, false)
 	if err != nil {
 		return false, err
 	}
@@ -139,13 +139,13 @@ func (clt *Client) receive(conn *Conn) (bool, error) {
 	return true, nil
 }
 
-func (clt *Client) Write(r *Request) (int, error) {
+func (clt *Client) write(r *Request) (int, error) {
 	for i := 0; i < connectionRetries; i++ {
 		if clt.conn == nil {
 			if i > 0 {
 				time.Sleep(time.Duration(i*2) * time.Second)
 			}
-			if !clt.Connect() {
+			if !clt.connect() {
 				continue
 			}
 		}
@@ -163,10 +163,10 @@ func (clt *Client) Write(r *Request) (int, error) {
 					Conn:     r.Conn,
 					Database: r.Database,
 				}
-				_, err := clt.Write(&databaseChanger)
+				_, err := clt.write(&databaseChanger)
 				if err != nil {
-					log.Println("\tError changing database", err)
-					clt.Close()
+					log.Println("Error changing database", err)
+					clt.close()
 					return 0, fmt.Errorf("Error in select")
 				}
 			}
@@ -174,7 +174,7 @@ func (clt *Client) Write(r *Request) (int, error) {
 		c, err := clt.conn.Write(r.Bytes)
 
 		if err != nil {
-			clt.Close()
+			clt.close()
 			if neterr, ok := err.(net.Error); !ok || !neterr.Timeout() {
 				log.Println("Failed in write:", err)
 			}
@@ -189,7 +189,7 @@ func (clt *Client) Write(r *Request) (int, error) {
 	return 0, fmt.Errorf("Too many failed connections")
 }
 
-func (clt *Client) Close() {
+func (clt *Client) close() {
 	clt.Lock()
 	if clt.listenerReady != nil {
 		select {
@@ -202,7 +202,7 @@ func (clt *Client) Close() {
 	conn := clt.conn
 	clt.conn = nil
 	if conn != nil {
-		conn.Close()
+		conn.close()
 		clt.database = 0
 		clt.queued.Init()
 	}
@@ -210,6 +210,6 @@ func (clt *Client) Close() {
 }
 
 func (clt *Client) Exit() {
-	clt.Close()
+	clt.close()
 	clt.channel <- &protoClientExit
 }

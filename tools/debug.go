@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Debug function, if the debug flag is set, then display. Do nothing otherwise
+// Debugf function, if the debug flag is set, then display. Do nothing otherwise
 // If Docker is in damon mode, also send the debug info on the socket
 // Convenience debug function, courtesy of http://github.com/dotcloud/docker
 func Debugf(format string, a ...interface{}) {

@@ -8,20 +8,11 @@ import (
 )
 
 type Relayer interface {
-	//	New(*tools.RelayerConfig) *Relayer
+	New(*tools.RelayerConfig, chan bool) *Relayer
 	Serve() error
 }
 
 func main() {
-	/*
-		server, err := redis.NewServer(redis.DefaultConfig())
-		if err != nil {
-			panic(err)
-		}
-		if err := server.ListenAndServe(); err != nil {
-			panic(err)
-		}
-	*/
 	done := make(chan bool)
 	relayers := 0
 
