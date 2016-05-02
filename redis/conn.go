@@ -2,6 +2,7 @@ package redis
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -153,6 +154,11 @@ func (cn *Conn) Parse(r *Request, parseCommand bool) ([]byte, error) {
 		return r.Bytes, nil
 	default:
 		if len(line) > 0 {
+			r.Bytes = line
+			parts := bytes.Split(line, []byte("\r\n"))
+			if len(parts) > 0 {
+				r.Command = string(parts[0])
+			}
 			return line, nil
 		}
 	}

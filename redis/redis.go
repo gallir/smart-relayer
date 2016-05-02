@@ -40,14 +40,17 @@ type Client struct {
 const (
 	connectionRetries = 3
 	pipelineCommands  = 1000
+	requestBufferSize = 8192
 	connectionIdleMax = 3 * time.Second
 	selectCommand     = "SELECT"
+	quitCommand       = "QUIT"
 	modeSync          = 0
 	modeSmart         = 1
 )
 
 var (
 	protoOK                    = []byte("+OK\r\n")
+	protoTrue                  = []byte(":1\r\n")
 	protoPing                  = []byte("PING\r\n")
 	protoPong                  = []byte("+PONG\r\n")
 	protoKO                    = []byte("-Error\r\n")
@@ -66,22 +69,23 @@ func init() {
 	// These are the commands that can be sent in "background" when in smart mode
 	// The values are the immediate responses to the clients
 	commands = map[string][]byte{
-		"PING":   []byte("+PONG\r\n"),
-		"SET":    []byte("+OK\r\n"),
-		"SETEX":  []byte("+OK\r\n"),
-		"PSETEX": []byte("+OK\r\n"),
-		"MSET":   []byte("+OK\r\n"),
-		"HMSET":  []byte("+OK\r\n"),
+		"PING":   protoPong,
+		"SET":    protoOK,
+		"SETEX":  protoOK,
+		"PSETEX": protoOK,
+		"MSET":   protoOK,
+		"HMSET":  protoOK,
 
-		"SELECT": []byte("+OK\r\n"),
+		"SELECT": protoOK,
+		"QUIT":   protoOK,
 
-		"DEL":       []byte(":1\r\n"),
-		"HSET":      []byte(":1\r\n"),
-		"HDEL":      []byte(":1\r\n"),
-		"EXPIRE":    []byte(":1\r\n"),
-		"EXPIREAT":  []byte(":1\r\n"),
-		"PEXPIRE":   []byte(":1\r\n"),
-		"PEXPIREAT": []byte(":1\r\n"),
+		"DEL":       protoTrue,
+		"HSET":      protoTrue,
+		"HDEL":      protoTrue,
+		"EXPIRE":    protoTrue,
+		"EXPIREAT":  protoTrue,
+		"PEXPIRE":   protoTrue,
+		"PEXPIREAT": protoTrue,
 	}
 }
 

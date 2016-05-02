@@ -55,11 +55,17 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 
 	for {
 		req := Request{Conn: conn}
-		_, err := conn.Parse(&req, true)
+		_, err = conn.Parse(&req, true)
 		if err != nil {
-			tools.Debugf("Finished session %s", time.Since(started))
-			return err
+			break
 		}
+
+		// QUIT received form client
+		if req.Command == quitCommand {
+			conn.Write(protoOK)
+			break
+		}
+
 		req.Database = conn.Database
 
 		// Smart mode, answer immediately and forget
@@ -78,4 +84,6 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 		response := <-responseCh
 		conn.Write(response)
 	}
+	tools.Debugf("Finished session %s", time.Since(started))
+	return err
 }

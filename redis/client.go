@@ -16,7 +16,7 @@ func NewClient(s *Server) (*Client, error) {
 		server: s,
 	}
 
-	clt.channel = make(chan *Request, 4096)
+	clt.channel = make(chan *Request, requestBufferSize)
 	clt.queued = list.New()
 	defer clt.Close()
 
@@ -49,7 +49,7 @@ func (clt *Client) Connect() bool {
 	clt.conn = NewConn(conn)
 	clt.conn.ReadTimeout = time.Second * 10
 	clt.conn.WriteTimeout = time.Second * 10
-	clt.listenerReady = make(chan bool, pipelineCommands)
+	clt.listenerReady = make(chan bool, requestBufferSize)
 	clt.Unlock()
 	go clt.netListener()
 	return true
