@@ -22,11 +22,13 @@ type RelayerConfig struct {
 	Url      string
 }
 
-func ReadConfig(filename string, config *Config) {
-	_, err := toml.DecodeFile(filename, config)
-	if err != nil {
-		log.Fatal(err)
+func ReadConfig(filename string) (config *Config, err error) {
+	var configuration Config
+	_, err = toml.DecodeFile(filename, &configuration)
+	if err == nil {
+		config = &configuration
 	}
+	return
 }
 
 func (c *RelayerConfig) Host() (host string) {

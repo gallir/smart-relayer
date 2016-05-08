@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,11 +12,12 @@ import (
 )
 
 var (
-	relayers       = make(map[int]lib.Relayer)
-	config         lib.Config
-	configFileName string
-	done           = make(chan bool)
-	sigs           = make(chan os.Signal, 1)
+	relayers        = make(map[int]lib.Relayer)
+	relayersCreated = 0
+	relayersConfig  *lib.Config
+	configFileName  string
+	done            = make(chan bool)
+	sigs            = make(chan os.Signal, 1)
 )
 
 func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
@@ -26,16 +28,23 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 	return
 }
 
-func startOrReload() {
-	lib.ReadConfig(configFileName, &config)
+func startOrReload() bool {
+	// Check config is OK
+	conf, err := lib.ReadConfig(configFileName)
+	if err != nil {
+		log.Println("Bad configuration", err)
+		return false
+	}
+	relayersConfig = conf
 
-	for _, conf := range config.Relayer {
+	for _, conf := range relayersConfig.Relayer {
 		srv, ok := relayers[conf.Listen]
 		if !ok {
 			// Start a new relayer
 			newServer, err := getNewServer(conf)
 			if err == nil {
 				lib.Debugf("Starting new relayer from %d to %s", newServer.Port(), conf.Url)
+				relayersCreated++
 				if e := newServer.Start(); e == nil {
 					relayers[newServer.Port()] = newServer
 				}
@@ -46,6 +55,7 @@ func startOrReload() {
 			srv.Reload(&conf)
 		}
 	}
+	return true
 }
 
 func main() {
@@ -53,18 +63,21 @@ func main() {
 	flag.StringVar(&configFileName, "c", "relayer.conf", "Configuration filename")
 	flag.Parse()
 
-	startOrReload()
+	if startOrReload() {
 
-	// Listen for reload signals
-	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGUSR1)
-	go func() {
-		for {
-			_ = <-sigs
-			startOrReload()
+		// Listen for reload signals
+		signal.Notify(sigs, syscall.SIGHUP, syscall.SIGUSR1)
+		go func() {
+			for {
+				_ = <-sigs
+				startOrReload()
+			}
+		}()
+
+		for i := 0; i < relayersCreated; i++ {
+			<-done
 		}
-	}()
-
-	for i := 0; i < len(relayers); i++ {
-		<-done
+		os.Exit(0)
 	}
+	os.Exit(1)
 }
