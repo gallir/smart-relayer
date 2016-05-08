@@ -20,7 +20,7 @@ func NewClient(s *Server) (*Client, error) {
 	clt.queued = list.New()
 	defer clt.close()
 
-	lib.Debugf("Client for target %s:%d ready", clt.server.config.Host, clt.server.config.Port)
+	lib.Debugf("Client %d for target %s ready", clt.server.config.Listen, clt.server.config.Host())
 
 	return clt, nil
 }
@@ -38,9 +38,9 @@ func (clt *Client) checkIdle() {
 }
 
 func (clt *Client) connect() bool {
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", clt.server.config.Host, clt.server.config.Port))
+	conn, err := net.Dial("tcp", clt.server.config.Host())
 	if err != nil {
-		log.Println("Failed to connect to", clt.server.config.Host, clt.server.config.Port)
+		log.Println("Failed to connect to", clt.server.config.Host())
 		clt.conn = nil
 		return false
 	}
@@ -58,6 +58,7 @@ func (clt *Client) connect() bool {
 // Listen for server messages in the internal channel
 func (clt *Client) Listen() {
 	started := time.Now()
+	currentConfig := clt.server.config
 	go clt.checkIdle()
 
 	for {
@@ -66,8 +67,16 @@ func (clt *Client) Listen() {
 			break
 		}
 		if bytes.Compare(request.Bytes, protoClientCloseConnection.Bytes) == 0 {
-			lib.Debugf("Closing by idle %s:%d", clt.server.config.Host, clt.server.config.Port)
+			lib.Debugf("Closing by idle %s", clt.server.config.Host())
 			clt.close()
+			continue
+		}
+		if bytes.Compare(request.Bytes, protoClientReload.Bytes) == 0 {
+			if currentConfig.Host() != clt.server.config.Host() {
+				lib.Debugf("Closing by reload %s -> %s", currentConfig.Host(), clt.server.config.Host())
+				clt.close()
+			}
+			currentConfig = clt.server.config
 			continue
 		}
 

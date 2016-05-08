@@ -3,6 +3,8 @@ package redis
 import (
 	"container/list"
 	"fmt"
+	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -55,6 +57,7 @@ var (
 	protoPong                  = []byte("+PONG\r\n")
 	protoKO                    = []byte("-Error\r\n")
 	protoClientCloseConnection = Request{Bytes: []byte("CLOSE")}
+	protoClientReload          = Request{Bytes: []byte("RELOAD")}
 	protoClientExit            = Request{Bytes: []byte("EXIT")}
 )
 
@@ -92,13 +95,112 @@ func init() {
 // New creates a new Redis server
 func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
-		config: c,
-		done:   done,
+		done: done,
 	}
+	srv.Reload(&c)
+	return srv, nil
+}
+
+func (srv *Server) Protocol() string {
+	return "redis"
+}
+
+func (srv *Server) Port() int {
+	return srv.config.Listen
+}
+
+// Serve accepts incoming connections on the Listener l
+func (srv *Server) Start() error {
+	l, e := net.Listen("tcp", fmt.Sprintf(":%d", srv.config.Listen))
+	if e != nil {
+		log.Println("Error listening to port", fmt.Sprintf(":%d", srv.config.Listen), e)
+		return e
+	}
+
+	log.Printf("Starting redis server at port %d for target %s", srv.config.Listen, srv.config.Host())
+	go func() {
+		defer func() {
+			l.Close()
+			srv.client.Exit()
+			srv.done <- true
+		}()
+
+		srv.client, _ = NewClient(srv)
+		go srv.client.Listen()
+
+		for {
+			netConn, err := l.Accept()
+			conn := NewConn(netConn)
+			if err != nil {
+				return
+			}
+			go srv.serveClient(conn)
+		}
+	}()
+
+	return nil
+}
+
+func (srv *Server) Reload(c *lib.RelayerConfig) {
+	reload := false
+	if srv.config.Url != "" {
+		reload = true
+	}
+	srv.config = *c // Save a copy
 	if c.Mode == "smart" {
 		srv.Mode = modeSmart
 	} else {
 		srv.Mode = modeSync
 	}
-	return srv, nil
+	if reload {
+		log.Printf("Reloading redis server at port %d for target %s", srv.config.Listen, srv.config.Host())
+		srv.client.channel <- &protoClientReload
+
+	}
+}
+
+func (srv *Server) serveClient(conn *Conn) (err error) {
+	defer func() {
+		if err != nil {
+			fmt.Fprintf(conn, "-%s\n", err)
+		}
+	}()
+
+	lib.Debugf("New connection from %s", conn.remoteAddr())
+	responseCh := make(chan []byte, 1)
+	started := time.Now()
+
+	for {
+		req := Request{Conn: conn}
+		_, err = conn.parse(&req, true)
+		if err != nil {
+			break
+		}
+
+		// QUIT received form client
+		if req.Command == quitCommand {
+			conn.Write(protoOK)
+			break
+		}
+
+		req.Database = conn.Database
+
+		// Smart mode, answer immediately and forget
+		if srv.Mode == modeSmart {
+			fastResponse, ok := commands[req.Command]
+			if ok {
+				conn.Write(fastResponse)
+				srv.client.channel <- &req
+				continue
+			}
+		}
+
+		// Synchronized mode
+		req.Channel = responseCh
+		srv.client.channel <- &req
+		response := <-responseCh
+		conn.Write(response)
+	}
+	lib.Debugf("Finished session %s", time.Since(started))
+	return err
 }
