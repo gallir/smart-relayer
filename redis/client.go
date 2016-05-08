@@ -8,7 +8,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/gallir/smart-relayer/tools"
+	"github.com/gallir/smart-relayer/lib"
 )
 
 func NewClient(s *Server) (*Client, error) {
@@ -20,7 +20,7 @@ func NewClient(s *Server) (*Client, error) {
 	clt.queued = list.New()
 	defer clt.close()
 
-	tools.Debugf("Client for target %s:%d ready", clt.server.config.Host, clt.server.config.Port)
+	lib.Debugf("Client for target %s:%d ready", clt.server.config.Host, clt.server.config.Port)
 
 	return clt, nil
 }
@@ -44,7 +44,7 @@ func (clt *Client) connect() bool {
 		clt.conn = nil
 		return false
 	}
-	tools.Debugf("Connected to %s", conn.RemoteAddr())
+	lib.Debugf("Connected to %s", conn.RemoteAddr())
 	clt.Lock()
 	clt.conn = NewConn(conn)
 	clt.conn.ReadTimeout = time.Second * 10
@@ -66,7 +66,7 @@ func (clt *Client) Listen() {
 			break
 		}
 		if bytes.Compare(request.Bytes, protoClientCloseConnection.Bytes) == 0 {
-			tools.Debugf("Closing by idle %s:%d", clt.server.config.Host, clt.server.config.Port)
+			lib.Debugf("Closing by idle %s:%d", clt.server.config.Host, clt.server.config.Port)
 			clt.close()
 			continue
 		}
@@ -96,7 +96,7 @@ func (clt *Client) netListener() {
 		}
 		doWork := <-ready
 		if !doWork {
-			tools.Debugf("Net listener exiting")
+			lib.Debugf("Net listener exiting")
 			return
 		}
 		conn := clt.conn // Safeguard, copy to avoid nil in receive()
@@ -194,9 +194,9 @@ func (clt *Client) close() {
 	if clt.listenerReady != nil {
 		select {
 		case clt.listenerReady <- false:
-			tools.Debugf("Signalig listener to quit")
+			lib.Debugf("Signalig listener to quit")
 		default:
-			tools.Debugf("Couldn't signal to listener")
+			lib.Debugf("Couldn't signal to listener")
 		}
 	}
 	conn := clt.conn

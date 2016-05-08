@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gallir/smart-relayer/tools"
+	"github.com/gallir/smart-relayer/lib"
 )
 
 var noDeadline = time.Time{}
@@ -168,7 +168,7 @@ func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
 }
 
 func malformed(expected string, got string) error {
-	tools.Debugf("Mailformed request:'%s does not match %s\\r\\n'", got, expected)
+	lib.Debugf("Mailformed request:'%s does not match %s\\r\\n'", got, expected)
 	return fmt.Errorf("Mailformed request:'%s does not match %s\\r\\n'", got, expected)
 }
 

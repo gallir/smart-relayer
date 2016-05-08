@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gallir/smart-relayer/tools"
+	"github.com/gallir/smart-relayer/lib"
 )
 
 // It stores the data for each client request
@@ -20,7 +20,7 @@ type Request struct {
 
 // Server is the thread that listen for clients' connections
 type Server struct {
-	config tools.RelayerConfig
+	config lib.RelayerConfig
 	client *Client
 	Mode   int
 	done   chan bool
@@ -90,7 +90,7 @@ func init() {
 }
 
 // New creates a new Redis server
-func New(c tools.RelayerConfig, done chan bool) (*Server, error) {
+func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		config: c,
 		done:   done,

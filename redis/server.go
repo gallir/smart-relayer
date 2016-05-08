@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/gallir/smart-relayer/tools"
+	"github.com/gallir/smart-relayer/lib"
 )
 
 // Serve accepts incoming connections on the Listener l
@@ -41,6 +41,10 @@ func (srv *Server) Serve() error {
 	return nil
 }
 
+func (srv *Server) Port() int {
+	return srv.config.Listen
+}
+
 func (srv *Server) serveClient(conn *Conn) (err error) {
 	defer func() {
 		if err != nil {
@@ -49,7 +53,7 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 
 	}()
 
-	tools.Debugf("New connection from %s", conn.remoteAddr())
+	lib.Debugf("New connection from %s", conn.remoteAddr())
 	responseCh := make(chan []byte, 1)
 	started := time.Now()
 
@@ -84,6 +88,6 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 		response := <-responseCh
 		conn.Write(response)
 	}
-	tools.Debugf("Finished session %s", time.Since(started))
+	lib.Debugf("Finished session %s", time.Since(started))
 	return err
 }
