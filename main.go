@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -27,24 +26,25 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 	return
 }
 
-func start() {
+func startOrReload() {
 	lib.ReadConfig(configFileName, &config)
 
 	for _, conf := range config.Relayer {
 		srv, ok := relayers[conf.Listen]
 		if !ok {
+			// Start a new relayer
 			newServer, err := getNewServer(conf)
 			if err == nil {
-				lib.Debugf("Starting new server %d to %s", newServer.Port(), conf.Url)
+				lib.Debugf("Starting new relayer from %d to %s", newServer.Port(), conf.Url)
 				if e := newServer.Start(); e == nil {
 					relayers[newServer.Port()] = newServer
 				}
 			}
 		} else {
-			lib.Debugf("Reloading server %d to %s", conf.Listen, conf.Url)
+			// The relayer exists, reload it
+			lib.Debugf("Reloading relayer from %d to %s", conf.Listen, conf.Url)
 			srv.Reload(&conf)
 		}
-
 	}
 }
 
@@ -53,15 +53,14 @@ func main() {
 	flag.StringVar(&configFileName, "c", "relayer.conf", "Configuration filename")
 	flag.Parse()
 
-	start()
+	startOrReload()
 
-	// Listen for realod signals
+	// Listen for reload signals
 	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGUSR1)
 	go func() {
 		for {
-			sig := <-sigs
-			fmt.Println("Reload", sig)
-			start()
+			_ = <-sigs
+			startOrReload()
 		}
 	}()
 
