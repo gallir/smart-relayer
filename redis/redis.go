@@ -48,12 +48,13 @@ const (
 	quitCommand       = "QUIT"
 	modeSync          = 0
 	modeSmart         = 1
+	connectTimeout    = 5 * time.Second
+	localReadTimeout  = 600 * time.Second
+	serverReadTimeout = 5 * time.Second
+	writeTimeout      = 5 * time.Second
 )
 
 var (
-	connectTimeout             = 5 * time.Second
-	readTimeout                = 5 * time.Second
-	writeTimeout               = 5 * time.Second
 	protoOK                    = []byte("+OK\r\n")
 	protoTrue                  = []byte(":1\r\n")
 	protoPing                  = []byte("PING\r\n")
@@ -133,7 +134,7 @@ func (srv *Server) Start() error {
 
 		for {
 			netConn, err := l.Accept()
-			conn := NewConn(netConn)
+			conn := NewConn(netConn, localReadTimeout)
 			if err != nil {
 				return
 			}

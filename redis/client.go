@@ -45,7 +45,7 @@ func (clt *Client) connect() bool {
 	}
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
 	clt.Lock()
-	clt.conn = NewConn(conn)
+	clt.conn = NewConn(conn, serverReadTimeout)
 	clt.listenerReady = make(chan bool, requestBufferSize)
 	clt.purgePending()
 	clt.Unlock()

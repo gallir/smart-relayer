@@ -18,9 +18,10 @@ var noDeadline = time.Time{}
 type Conn struct {
 	NetConn net.Conn
 	// Parser  func(*Conn) ([]byte, error)
-	Rd       *bufio.Reader
-	Buf      []byte
-	bufCount int
+	Rd          *bufio.Reader
+	Buf         []byte
+	ReadTimeout time.Duration
+	bufCount    int
 
 	Inited bool
 	UsedAt time.Time
@@ -32,10 +33,11 @@ const (
 	maxBufCount = 100000 // To protect for very large buffer consuming lot of memory
 )
 
-func NewConn(netConn net.Conn) *Conn {
+func NewConn(netConn net.Conn, readTimeout time.Duration) *Conn {
 	cn := &Conn{
-		NetConn: netConn,
-		UsedAt:  time.Now(),
+		NetConn:     netConn,
+		UsedAt:      time.Now(),
+		ReadTimeout: readTimeout, // We use different read timeouts for the server and local client
 	}
 	cn.Rd = bufio.NewReader(cn)
 	return cn
@@ -47,8 +49,8 @@ func (cn *Conn) isStale(timeout time.Duration) bool {
 
 func (cn *Conn) Read(b []byte) (int, error) {
 	cn.UsedAt = time.Now()
-	if readTimeout != 0 {
-		cn.NetConn.SetReadDeadline(cn.UsedAt.Add(readTimeout))
+	if cn.ReadTimeout != 0 {
+		cn.NetConn.SetReadDeadline(cn.UsedAt.Add(cn.ReadTimeout))
 	} else {
 		cn.NetConn.SetReadDeadline(noDeadline)
 	}
