@@ -43,7 +43,7 @@ const (
 	connectionRetries = 3
 	pipelineCommands  = 1000
 	requestBufferSize = 8192
-	connectionIdleMax = 3 * time.Second
+	connectionIdleMax = 5 * time.Second
 	selectCommand     = "SELECT"
 	quitCommand       = "QUIT"
 	modeSync          = 0
@@ -84,7 +84,6 @@ func init() {
 		"HMSET":  protoOK,
 
 		"SELECT": protoOK,
-		"QUIT":   protoOK,
 
 		"DEL":       protoTrue,
 		"HSET":      protoTrue,
@@ -134,10 +133,10 @@ func (srv *Server) Start() error {
 
 		for {
 			netConn, err := l.Accept()
-			conn := NewConn(netConn, localReadTimeout)
 			if err != nil {
 				return
 			}
+			conn := NewConn(netConn, localReadTimeout)
 			go srv.serveClient(conn)
 		}
 	}()
@@ -168,6 +167,7 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 		if err != nil {
 			fmt.Fprintf(conn, "-%s\n", err)
 		}
+		conn.close()
 	}()
 
 	lib.Debugf("New connection from %s", conn.remoteAddr())

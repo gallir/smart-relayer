@@ -5,9 +5,9 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gallir/smart-relayer/lib"
@@ -101,6 +101,7 @@ func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
 		return nil, err
 	}
 	if len(line) == 0 {
+		lib.Debugf("Empty line")
 		return nil, malformed("short response line", string(line))
 	}
 
@@ -125,7 +126,7 @@ func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
 			}
 			if parseCommand {
 				if r.Command == "" {
-					r.Command = string(b[:len(b)-2])
+					r.Command = strings.ToUpper(string(b[:len(b)-2]))
 				} else {
 					if r.Command == "SELECT" {
 						n, err = strconv.Atoi(string(b[0 : len(b)-2]))
@@ -152,18 +153,14 @@ func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
 		}
 		return r.Bytes, nil
 	default:
-		if len(line) > 0 {
-			r.Bytes = line
-			parts := bytes.Split(line, []byte("\r\n"))
-			if len(parts) > 0 {
-				r.Command = string(parts[0])
-			}
-			return line, nil
+		// Inline request
+		r.Bytes = line
+		parts := bytes.Split(line, []byte(" "))
+		if len(parts) > 0 {
+			r.Command = strings.ToUpper(strings.TrimSpace(string(parts[0])))
 		}
+		return line, nil
 	}
-	log.Println("Empty line", string(line))
-	return nil, malformed("Empty line", string(line))
-
 }
 
 func malformed(expected string, got string) error {
