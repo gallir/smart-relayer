@@ -51,6 +51,9 @@ const (
 )
 
 var (
+	connectTimeout             = 5 * time.Second
+	readTimeout                = 5 * time.Second
+	writeTimeout               = 5 * time.Second
 	protoOK                    = []byte("+OK\r\n")
 	protoTrue                  = []byte(":1\r\n")
 	protoPing                  = []byte("PING\r\n")

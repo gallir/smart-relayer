@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"log"
 	"os"
 	"os/signal"
@@ -15,7 +14,6 @@ var (
 	relayers        = make(map[int]lib.Relayer)
 	relayersCreated = 0
 	relayersConfig  *lib.Config
-	configFileName  string
 	done            = make(chan bool)
 	sigs            = make(chan os.Signal, 1)
 )
@@ -30,7 +28,7 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 
 func startOrReload() bool {
 	// Check config is OK
-	conf, err := lib.ReadConfig(configFileName)
+	conf, err := lib.ReadConfig(lib.GlobalConfig.ConfigFileName)
 	if err != nil {
 		log.Println("Bad configuration", err)
 		return false
@@ -59,10 +57,6 @@ func startOrReload() bool {
 }
 
 func main() {
-
-	flag.StringVar(&configFileName, "c", "relayer.conf", "Configuration filename")
-	flag.Parse()
-
 	if startOrReload() {
 
 		// Listen for reload signals

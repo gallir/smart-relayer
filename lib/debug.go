@@ -11,7 +11,7 @@ import (
 // If Docker is in damon mode, also send the debug info on the socket
 // Convenience debug function, courtesy of http://github.com/dotcloud/docker
 func Debugf(format string, a ...interface{}) {
-	if os.Getenv("DEBUG") != "" {
+	if GlobalConfig.Debug || os.Getenv("DEBUG") != "" {
 
 		// Retrieve the stack infos
 		_, file, line, ok := runtime.Caller(1)

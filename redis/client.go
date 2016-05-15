@@ -18,7 +18,6 @@ func NewClient(s *Server) (*Client, error) {
 
 	clt.channel = make(chan *Request, requestBufferSize)
 	clt.queued = list.New()
-	defer clt.close()
 
 	lib.Debugf("Client %d for target %s ready", clt.server.config.Listen, clt.server.config.Host())
 
@@ -38,7 +37,7 @@ func (clt *Client) checkIdle() {
 }
 
 func (clt *Client) connect() bool {
-	conn, err := net.Dial("tcp", clt.server.config.Host())
+	conn, err := net.DialTimeout("tcp", clt.server.config.Host(), connectTimeout)
 	if err != nil {
 		log.Println("Failed to connect to", clt.server.config.Host())
 		clt.conn = nil
@@ -47,9 +46,8 @@ func (clt *Client) connect() bool {
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
 	clt.Lock()
 	clt.conn = NewConn(conn)
-	clt.conn.ReadTimeout = time.Second * 10
-	clt.conn.WriteTimeout = time.Second * 10
 	clt.listenerReady = make(chan bool, requestBufferSize)
+	clt.purgePending()
 	clt.Unlock()
 	go clt.netListener()
 	return true
@@ -116,6 +114,7 @@ func (clt *Client) netListener() {
 		_, e := clt.receive(conn)
 		if e != nil {
 			log.Println("Error in listener", e)
+			clt.close()
 		}
 	}
 }
@@ -141,7 +140,11 @@ func (clt *Client) receive(conn *Conn) (bool, error) {
 			log.Printf("unexpected type %T\n", r) // %T prints whatever type t has
 		case *Request:
 			if r.Channel != nil {
-				r.Channel <- resp
+				select {
+				case r.Channel <- resp:
+				default:
+					log.Println("Error sending data back to client")
+				}
 			}
 		}
 	}
@@ -200,6 +203,8 @@ func (clt *Client) write(r *Request) (int, error) {
 
 func (clt *Client) close() {
 	clt.Lock()
+	defer clt.Unlock()
+
 	if clt.listenerReady != nil {
 		select {
 		case clt.listenerReady <- false:
@@ -211,11 +216,34 @@ func (clt *Client) close() {
 	conn := clt.conn
 	clt.conn = nil
 	if conn != nil {
+		lib.Debugf("Closing connection")
 		conn.close()
 		clt.database = 0
+		clt.purgePending()
+	}
+}
+
+// The connection is being closed or reopened, send error to clients waiting for response
+func (clt *Client) purgePending() {
+	freed := 0
+	for q := clt.queued.Front(); q != nil; q = q.Next() {
+		freed++
+		r := q.Value
+		switch r := r.(type) {
+		case *Request:
+			if r.Channel != nil {
+				select {
+				case r.Channel <- protoKO:
+				default:
+				}
+			}
+		default:
+			log.Printf("unexpected type %T\n", r) // %T prints whatever type t has
+		}
+	}
+	if freed > 0 {
 		clt.queued.Init()
 	}
-	clt.Unlock()
 }
 
 func (clt *Client) Exit() {

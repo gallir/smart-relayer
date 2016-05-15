@@ -25,9 +25,6 @@ type Conn struct {
 	Inited bool
 	UsedAt time.Time
 
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-
 	Database int
 }
 
@@ -50,8 +47,8 @@ func (cn *Conn) isStale(timeout time.Duration) bool {
 
 func (cn *Conn) Read(b []byte) (int, error) {
 	cn.UsedAt = time.Now()
-	if cn.ReadTimeout != 0 {
-		cn.NetConn.SetReadDeadline(cn.UsedAt.Add(cn.ReadTimeout))
+	if readTimeout != 0 {
+		cn.NetConn.SetReadDeadline(cn.UsedAt.Add(readTimeout))
 	} else {
 		cn.NetConn.SetReadDeadline(noDeadline)
 	}
@@ -60,8 +57,8 @@ func (cn *Conn) Read(b []byte) (int, error) {
 
 func (cn *Conn) Write(b []byte) (int, error) {
 	cn.UsedAt = time.Now()
-	if cn.WriteTimeout != 0 {
-		cn.NetConn.SetWriteDeadline(cn.UsedAt.Add(cn.WriteTimeout))
+	if writeTimeout != 0 {
+		cn.NetConn.SetWriteDeadline(cn.UsedAt.Add(writeTimeout))
 	} else {
 		cn.NetConn.SetWriteDeadline(noDeadline)
 	}
