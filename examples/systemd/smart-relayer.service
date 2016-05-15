@@ -1,0 +1,18 @@
+[Unit]
+Description=Smart relayer
+Documentation=https://github.com/gallir/smart-relayer
+After=network.target
+
+[Service]
+EnvironmentFile=-/etc/default/smart-relayer
+ExecStart=/usr/local/bin/smart-relayer -c /usr/local/etc/relayer.conf
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=always
+RestartSec=1
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
+Alias=smart-relayer.service
+
