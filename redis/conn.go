@@ -30,7 +30,7 @@ type Conn struct {
 }
 
 const (
-	maxBufCount = 100000 // To protect for very large buffer consuming lot of memory
+	maxBufCount = 1000 // To protect for very large buffer consuming lot of memory
 )
 
 func NewConn(netConn net.Conn, readTimeout time.Duration) *Conn {
@@ -83,10 +83,10 @@ func (cn *Conn) readN(n int) ([]byte, error) {
 	if cn.bufCount > maxBufCount || cap(cn.Buf) < n {
 		cn.Buf = make([]byte, n)
 		cn.bufCount = 0
+	} else {
+		cn.Buf = cn.Buf[:n]
+		cn.bufCount++
 	}
-
-	cn.Buf = cn.Buf[:n]
-	cn.bufCount++
 	_, err := io.ReadFull(cn.Rd, cn.Buf)
 	return cn.Buf, err
 }

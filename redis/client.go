@@ -88,7 +88,7 @@ func (clt *Client) Listen() {
 	log.Println("Finished Redis client", time.Since(started))
 }
 
-// This gotoutine listen for incoming answers from the Redis server
+// This goroutine listens for incoming answers from the Redis server
 func (clt *Client) netListener() {
 	ready := clt.listenerReady
 	if clt.conn == nil || ready == nil {

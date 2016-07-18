@@ -181,7 +181,7 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 			break
 		}
 
-		// QUIT received form client
+		// QUIT received from client
 		if req.Command == quitCommand {
 			conn.Write(protoOK)
 			break
