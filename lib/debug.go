@@ -2,6 +2,7 @@ package lib
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"runtime"
 	"strings"
@@ -22,6 +23,6 @@ func Debugf(format string, a ...interface{}) {
 			file = file[strings.LastIndex(file, "/")+1:]
 		}
 
-		fmt.Fprintf(os.Stderr, fmt.Sprintf("[%d] [debug] %s:%d %s\n", os.Getpid(), file, line, format), a...)
+		log.Printf(fmt.Sprintf("[%d] [debug] %s:%d %s\n", os.Getpid(), file, line, format), a...)
 	}
 }

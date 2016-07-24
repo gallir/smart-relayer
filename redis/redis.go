@@ -1,7 +1,6 @@
 package redis
 
 import (
-	"container/list"
 	"fmt"
 	"log"
 	"net"
@@ -31,12 +30,11 @@ type Server struct {
 // Client is the thread that connect to the remote redis server
 type Client struct {
 	sync.Mutex
-	server        *Server
-	conn          *Conn
-	channel       chan *Request // The server sends the requests via this channel
-	database      int           // The current selected database
-	queued        *list.List    // The list of unanswered request
-	listenerReady chan bool     // To signal the listener thread to read answers
+	server       *Server
+	conn         *Conn
+	channel      chan *Request // The server sends the requests via this channel
+	database     int           // The current selected database
+	sentRequests chan *Request // Requests sent to the server
 }
 
 const (

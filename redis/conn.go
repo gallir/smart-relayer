@@ -15,6 +15,7 @@ import (
 
 var noDeadline = time.Time{}
 
+// Conn keeps the status of the connection to a server
 type Conn struct {
 	NetConn net.Conn
 	// Parser  func(*Conn) ([]byte, error)
