@@ -13,7 +13,7 @@ import (
 
 // It stores the data for each client request
 type Request struct {
-	Conn    *Conn
+	Conn    *RedisIO
 	Command []byte
 	//Bytes    []byte
 	Buffer   *bytes.Buffer
@@ -33,7 +33,7 @@ type Server struct {
 type Client struct {
 	sync.Mutex
 	server       *Server
-	conn         *Conn
+	conn         *RedisIO
 	channel      chan *Request // The server sends the requests via this channel
 	database     int           // The current selected database
 	sentRequests chan *Request // Requests sent to the server
@@ -140,7 +140,7 @@ func (srv *Server) Start() error {
 			if err != nil {
 				return
 			}
-			conn := NewConn(netConn, localReadTimeout)
+			conn := NewConn(netConn, localReadTimeout, writeTimeout)
 			go srv.serveClient(conn)
 		}
 	}()
@@ -166,28 +166,28 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 	}
 }
 
-func (srv *Server) serveClient(conn *Conn) (err error) {
+func (srv *Server) serveClient(conn *RedisIO) (err error) {
 	defer func() {
 		if err != nil {
 			fmt.Fprintf(conn, "-%s\n", err)
 		}
-		conn.close()
+		conn.Close()
 	}()
 
-	lib.Debugf("New connection from %s", conn.remoteAddr())
+	lib.Debugf("New connection from %s", conn.NetBuf.RemoteAddr())
 	responseCh := make(chan []byte, 1)
 	started := time.Now()
 
 	for {
 		req := Request{Conn: conn}
-		_, err = conn.parse(&req, true)
+		_, err = conn.Read(&req, true)
 		if err != nil {
 			break
 		}
 
 		// QUIT received from client
 		if bytes.Compare(req.Command, quitCommand) == 0 {
-			conn.Write(protoOK)
+			conn.NetBuf.Write(protoOK)
 			break
 		}
 
@@ -197,7 +197,7 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 		if srv.Mode == modeSmart {
 			fastResponse, ok := commands[string(req.Command)]
 			if ok {
-				conn.Write(fastResponse)
+				conn.NetBuf.Write(fastResponse)
 				srv.client.channel <- &req
 				continue
 			}
@@ -207,7 +207,7 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 		req.Channel = responseCh
 		srv.client.channel <- &req
 		response := <-responseCh
-		conn.Write(response)
+		conn.NetBuf.Write(response)
 	}
 	lib.Debugf("Finished session %s", time.Since(started))
 	return err

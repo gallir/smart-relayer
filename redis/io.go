@@ -1,10 +1,8 @@
 package redis
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
-	"io"
 	"net"
 	"strconv"
 	"time"
@@ -12,20 +10,9 @@ import (
 	"github.com/gallir/smart-relayer/lib"
 )
 
-var noDeadline = time.Time{}
-
 // Conn keeps the status of the connection to a server
-type Conn struct {
-	NetConn net.Conn
-	// Parser  func(*Conn) ([]byte, error)
-	Rd          *bufio.Reader
-	Buf         []byte
-	ReadTimeout time.Duration
-	bufCount    int
-
-	Inited bool
-	UsedAt time.Time
-
+type RedisIO struct {
+	NetBuf   *lib.Netbuf
 	Database int
 }
 
@@ -33,72 +20,27 @@ const (
 	maxBufCount = 1000 // To protect for very large buffer consuming lot of memory
 )
 
-func NewConn(netConn net.Conn, readTimeout time.Duration) *Conn {
-	cn := &Conn{
-		NetConn:     netConn,
-		UsedAt:      time.Now(),
-		ReadTimeout: readTimeout, // We use different read timeouts for the server and local client
+func NewConn(netConn net.Conn, readTimeout, writeTimeout time.Duration) *RedisIO {
+	cn := &RedisIO{
+		NetBuf: lib.NewNetbuf(netConn, readTimeout, writeTimeout),
 	}
-	cn.Rd = bufio.NewReader(cn)
 	return cn
 }
 
-func (cn *Conn) isStale(timeout time.Duration) bool {
-	return timeout > 0 && time.Since(cn.UsedAt) > timeout
+func (cn *RedisIO) IsStale(timeout time.Duration) bool {
+	return cn.NetBuf.IsStale(timeout)
 }
 
-// Read complies with io.Reader interface
-func (cn *Conn) Read(b []byte) (int, error) {
-	cn.UsedAt = time.Now()
-	if cn.ReadTimeout != 0 {
-		cn.NetConn.SetReadDeadline(cn.UsedAt.Add(cn.ReadTimeout))
-	} else {
-		cn.NetConn.SetReadDeadline(noDeadline)
-	}
-	return cn.NetConn.Read(b)
+func (cn *RedisIO) Write(b []byte) (int, error) {
+	return cn.NetBuf.Write(b)
 }
 
-// Write complies with io.Writer interface
-func (cn *Conn) Write(b []byte) (int, error) {
-	cn.UsedAt = time.Now()
-	if writeTimeout != 0 {
-		cn.NetConn.SetWriteDeadline(cn.UsedAt.Add(writeTimeout))
-	} else {
-		cn.NetConn.SetWriteDeadline(noDeadline)
-	}
-	return cn.NetConn.Write(b)
+func (cn *RedisIO) Close() error {
+	return cn.NetBuf.Close()
 }
 
-func (cn *Conn) remoteAddr() net.Addr {
-	return cn.NetConn.RemoteAddr()
-}
-
-func (cn *Conn) readLine() ([]byte, error) {
-	line, err := cn.Rd.ReadBytes('\n')
-	if err == nil {
-		return line, nil
-	}
-	return nil, err
-}
-
-func (cn *Conn) readN(n int) ([]byte, error) {
-	if cn.bufCount > maxBufCount || cap(cn.Buf) < n {
-		cn.Buf = make([]byte, n)
-		cn.bufCount = 0
-	} else {
-		cn.Buf = cn.Buf[:n]
-		cn.bufCount++
-	}
-	_, err := io.ReadFull(cn.Rd, cn.Buf)
-	return cn.Buf, err
-}
-
-func (cn *Conn) close() error {
-	return cn.NetConn.Close()
-}
-
-func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
-	line, err := cn.readLine()
+func (cn *RedisIO) Read(r *Request, parseCommand bool) ([]byte, error) {
+	line, err := cn.NetBuf.ReadLine()
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +64,7 @@ func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
 		}
 		r.Buffer.Write(line)
 		if n > 0 {
-			b, err := cn.readN(n + 2)
+			b, err := cn.NetBuf.ReadN(n + 2)
 			if err != nil {
 				return nil, err
 			}
@@ -152,7 +94,7 @@ func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
 		}
 		r.Buffer.Write(line)
 		for i := 0; i < n; i++ {
-			_, err := cn.parse(r, parseCommand)
+			_, err := cn.Read(r, parseCommand)
 			if err != nil {
 				return nil, malformed("*<numberOfArguments>", string(line))
 			}

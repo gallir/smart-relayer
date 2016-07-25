@@ -28,7 +28,7 @@ func (clt *Client) checkIdle() {
 		if clt.channel == nil {
 			break
 		}
-		if clt.conn != nil && clt.conn.isStale(connectionIdleMax) {
+		if clt.conn != nil && clt.conn.IsStale(connectionIdleMax) {
 			clt.channel <- &protoClientCloseConnection
 		}
 		time.Sleep(connectionIdleMax)
@@ -47,7 +47,7 @@ func (clt *Client) connect() bool {
 		return false
 	}
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
-	clt.conn = NewConn(conn, serverReadTimeout)
+	clt.conn = NewConn(conn, serverReadTimeout, writeTimeout)
 	clt.createRequestChannel()
 	go clt.netListener()
 	return true
@@ -120,7 +120,7 @@ func (clt *Client) netListener() {
 		}
 
 		resp := &Request{}
-		_, err := conn.parse(resp, false)
+		_, err := conn.Read(resp, false)
 		if err != nil {
 			log.Println("Error in listener", err)
 			clt.close()
@@ -165,7 +165,6 @@ func (clt *Client) write(r *Request) (int, error) {
 	}
 	bytes := r.Buffer.Bytes()
 	c, err := clt.conn.Write(bytes)
-	lib.Debugf("Command: %s, Wrote %d bytes [%s]", r.Command, len(bytes), bytes)
 
 	if err != nil {
 		clt.close()
@@ -195,7 +194,7 @@ func (clt *Client) close() {
 	clt.conn = nil
 	if conn != nil {
 		lib.Debugf("Closing connection")
-		conn.close()
+		conn.Close()
 		clt.database = 0
 		clt.purgePending()
 	}
