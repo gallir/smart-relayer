@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gallir/smart-relayer/lib"
@@ -48,6 +47,7 @@ func (cn *Conn) isStale(timeout time.Duration) bool {
 	return timeout > 0 && time.Since(cn.UsedAt) > timeout
 }
 
+// Read complies with io.Reader interface
 func (cn *Conn) Read(b []byte) (int, error) {
 	cn.UsedAt = time.Now()
 	if cn.ReadTimeout != 0 {
@@ -58,6 +58,7 @@ func (cn *Conn) Read(b []byte) (int, error) {
 	return cn.NetConn.Read(b)
 }
 
+// Write complies with io.Writer interface
 func (cn *Conn) Write(b []byte) (int, error) {
 	cn.UsedAt = time.Now()
 	if writeTimeout != 0 {
@@ -106,16 +107,20 @@ func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
 		return nil, malformed("short response line", string(line))
 	}
 
+	if r.Buffer == nil {
+		r.Buffer = new(bytes.Buffer)
+	}
+
 	switch line[0] {
 	case '+', '-', ':':
-		r.Bytes = line
+		r.Buffer.Write(line)
 		return line, nil
 	case '$':
 		n, err := strconv.Atoi(string(line[1 : len(line)-2]))
 		if err != nil {
 			return nil, err
 		}
-		r.Bytes = append(r.Bytes, line...)
+		r.Buffer.Write(line)
 		if n > 0 {
 			b, err := cn.readN(n + 2)
 			if err != nil {
@@ -126,10 +131,10 @@ func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
 				return nil, malformedMissingCRLF()
 			}
 			if parseCommand {
-				if r.Command == "" {
-					r.Command = strings.ToUpper(string(b[:len(b)-2]))
+				if len(r.Command) == 0 {
+					r.Command = bytes.ToUpper(b[:len(b)-2])
 				} else {
-					if r.Command == "SELECT" {
+					if bytes.Compare(r.Command, selectCommand) == 0 {
 						n, err = strconv.Atoi(string(b[0 : len(b)-2]))
 						if err == nil {
 							cn.Database = n
@@ -137,28 +142,28 @@ func (cn *Conn) parse(r *Request, parseCommand bool) ([]byte, error) {
 					}
 				}
 			}
-			r.Bytes = append(r.Bytes, b...)
+			r.Buffer.Write(b)
 		}
-		return r.Bytes, nil
+		return r.Command, nil
 	case '*':
 		n, err := strconv.Atoi(string(line[1 : len(line)-2]))
 		if n < 0 || err != nil {
 			return nil, err
 		}
-		r.Bytes = append(r.Bytes, line...)
+		r.Buffer.Write(line)
 		for i := 0; i < n; i++ {
 			_, err := cn.parse(r, parseCommand)
 			if err != nil {
 				return nil, malformed("*<numberOfArguments>", string(line))
 			}
 		}
-		return r.Bytes, nil
+		return r.Command, nil
 	default:
 		// Inline request
-		r.Bytes = line
+		r.Buffer.Write(line)
 		parts := bytes.Split(line, []byte(" "))
 		if len(parts) > 0 {
-			r.Command = strings.ToUpper(strings.TrimSpace(string(parts[0])))
+			r.Command = bytes.ToUpper(bytes.TrimSpace(parts[0]))
 		}
 		return line, nil
 	}

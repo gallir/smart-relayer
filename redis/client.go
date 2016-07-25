@@ -65,15 +65,15 @@ func (clt *Client) Listen() {
 
 	for {
 		request := <-clt.channel
-		if bytes.Compare(request.Bytes, protoClientExit.Bytes) == 0 {
+		if bytes.Compare(request.Command, exitCommand) == 0 {
 			break
 		}
-		if bytes.Compare(request.Bytes, protoClientCloseConnection.Bytes) == 0 {
+		if bytes.Compare(request.Command, closeConnectionCommand) == 0 {
 			lib.Debugf("Closing by idle %s", clt.server.config.Host())
 			clt.close()
 			continue
 		}
-		if bytes.Compare(request.Bytes, protoClientReload.Bytes) == 0 {
+		if bytes.Compare(request.Command, reloadCommand) == 0 {
 			if currentConfig.Host() != clt.server.config.Host() {
 				lib.Debugf("Closing by reload %s -> %s", currentConfig.Host(), clt.server.config.Host())
 				clt.close()
@@ -119,7 +119,8 @@ func (clt *Client) netListener() {
 			return
 		}
 
-		resp, err := conn.parse(&Request{}, false)
+		resp := &Request{}
+		_, err := conn.parse(resp, false)
 		if err != nil {
 			log.Println("Error in listener", err)
 			clt.close()
@@ -128,7 +129,7 @@ func (clt *Client) netListener() {
 
 		if req.Channel != nil {
 			select {
-			case req.Channel <- resp:
+			case req.Channel <- resp.Buffer.Bytes():
 			default:
 				log.Println("Error sending data back to client")
 			}
@@ -141,7 +142,7 @@ func (clt *Client) write(r *Request) (int, error) {
 		return 0, fmt.Errorf("Connection failed")
 	}
 
-	if r.Command == selectCommand {
+	if bytes.Compare(r.Command, selectCommand) == 0 {
 		if clt.server.Mode == modeSmart && clt.database == r.Database { // There is no need to select again
 			return 0, nil
 		}
@@ -150,7 +151,7 @@ func (clt *Client) write(r *Request) (int, error) {
 		if clt.database != r.Database {
 			databaseChanger := Request{
 				Command:  selectCommand,
-				Bytes:    getSelect(r.Database),
+				Buffer:   bytes.NewBuffer(getSelect(r.Database)),
 				Conn:     r.Conn,
 				Database: r.Database,
 			}
@@ -162,7 +163,9 @@ func (clt *Client) write(r *Request) (int, error) {
 			}
 		}
 	}
-	c, err := clt.conn.Write(r.Bytes)
+	bytes := r.Buffer.Bytes()
+	c, err := clt.conn.Write(bytes)
+	lib.Debugf("Command: %s, Wrote %d bytes [%s]", r.Command, len(bytes), bytes)
 
 	if err != nil {
 		clt.close()

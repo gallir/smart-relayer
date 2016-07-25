@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"net"
@@ -12,9 +13,10 @@ import (
 
 // It stores the data for each client request
 type Request struct {
-	Conn     *Conn
-	Command  string
-	Bytes    []byte
+	Conn    *Conn
+	Command []byte
+	//Bytes    []byte
+	Buffer   *bytes.Buffer
 	Channel  chan []byte // Channel to send the response to the original client
 	Database int         // The current database at the time the request was issued
 }
@@ -42,8 +44,6 @@ const (
 	pipelineCommands  = 1000
 	requestBufferSize = 8192
 	connectionIdleMax = 5 * time.Second
-	selectCommand     = "SELECT"
-	quitCommand       = "QUIT"
 	modeSync          = 0
 	modeSmart         = 1
 	connectTimeout    = 5 * time.Second
@@ -53,21 +53,27 @@ const (
 )
 
 var (
+	selectCommand          = []byte("SELECT")
+	quitCommand            = []byte("QUIT")
+	closeConnectionCommand = []byte("CLOSE")
+	reloadCommand          = []byte("RELOAD")
+	exitCommand            = []byte("EXIT")
+
 	protoOK                    = []byte("+OK\r\n")
 	protoTrue                  = []byte(":1\r\n")
 	protoPing                  = []byte("PING\r\n")
 	protoPong                  = []byte("+PONG\r\n")
 	protoKO                    = []byte("-Error\r\n")
-	protoClientCloseConnection = Request{Bytes: []byte("CLOSE")}
-	protoClientReload          = Request{Bytes: []byte("RELOAD")}
-	protoClientExit            = Request{Bytes: []byte("EXIT")}
+	protoClientCloseConnection = Request{Command: closeConnectionCommand}
+	protoClientReload          = Request{Command: reloadCommand}
+	protoClientExit            = Request{Command: exitCommand}
 )
 
 var commands map[string][]byte
 
 func getSelect(n int) []byte {
 	str := fmt.Sprintf("%d", n)
-	return []byte(fmt.Sprintf("*2\r\n$6\r\nSELECT\r\n$%d\r\n%s\r\n", len(str), str))
+	return []byte(fmt.Sprintf("*2\r\n$6\r\n%s\r\n$%d\r\n%s\r\n", selectCommand, len(str), str))
 }
 
 func init() {
@@ -180,7 +186,7 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 		}
 
 		// QUIT received from client
-		if req.Command == quitCommand {
+		if bytes.Compare(req.Command, quitCommand) == 0 {
 			conn.Write(protoOK)
 			break
 		}
@@ -189,7 +195,7 @@ func (srv *Server) serveClient(conn *Conn) (err error) {
 
 		// Smart mode, answer immediately and forget
 		if srv.Mode == modeSmart {
-			fastResponse, ok := commands[req.Command]
+			fastResponse, ok := commands[string(req.Command)]
 			if ok {
 				conn.Write(fastResponse)
 				srv.client.channel <- &req
