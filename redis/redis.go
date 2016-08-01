@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -112,19 +113,36 @@ func (srv *Server) Protocol() string {
 	return "redis"
 }
 
-func (srv *Server) Port() int {
+func (srv *Server) Listen() string {
 	return srv.config.Listen
 }
 
 // Serve accepts incoming connections on the Listener l
 func (srv *Server) Start() error {
-	l, e := net.Listen("tcp", fmt.Sprintf(":%d", srv.config.Listen))
+	connType := srv.config.ListenScheme()
+	addr := srv.config.ListenHost()
+
+	// Check that the socket does not exist
+	if connType == "unix" {
+		if s, err := os.Stat(addr); err == nil {
+			if (s.Mode() & os.ModeSocket) > 0 {
+				// Remove existing socket
+				log.Println("Warning, removing existing socket", addr)
+				os.Remove(addr)
+			} else {
+				log.Println("socket", addr, s.Mode(), os.ModeSocket)
+				log.Fatalf("Socket %s exists and it's not a Unix socket", addr)
+			}
+		}
+	}
+
+	l, e := net.Listen(connType, addr)
 	if e != nil {
-		log.Println("Error listening to port", fmt.Sprintf(":%d", srv.config.Listen), e)
+		log.Println("Error listening to", addr, e)
 		return e
 	}
 
-	log.Printf("Starting redis server at port %d for target %s", srv.config.Listen, srv.config.Host())
+	log.Printf("Starting redis server at %s for target %s", addr, srv.config.Host())
 	go func() {
 		defer func() {
 			l.Close()

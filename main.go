@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	relayers        = make(map[int]lib.Relayer)
+	relayers        = make(map[string]lib.Relayer)
 	relayersCreated = 0
 	relayersConfig  *lib.Config
 	done            = make(chan bool)
@@ -41,10 +41,10 @@ func startOrReload() bool {
 			// Start a new relayer
 			newServer, err := getNewServer(conf)
 			if err == nil {
-				lib.Debugf("Starting new relayer from %d to %s", newServer.Port(), conf.Url)
+				lib.Debugf("Starting new relayer from %s to %s", newServer.Listen(), conf.Url)
 				relayersCreated++
 				if e := newServer.Start(); e == nil {
-					relayers[newServer.Port()] = newServer
+					relayers[newServer.Listen()] = newServer
 				}
 			}
 		} else {

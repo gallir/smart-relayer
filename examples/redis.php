@@ -1,13 +1,14 @@
 <?PHP
 
 $redis = new Redis();
-$redis->connect('127.0.0.1', 6389);
-//$redis->connect('192.168.111.2', 6379);
 
 $value = randString(40000);
 
 $start = microtime(True);
 for ($i = 0; $i<1000; $i++) {
+    //$redis->connect('127.0.0.1', 6389);
+    $redis->connect('/tmp/redis.sock');
+    //$redis->connect('192.168.111.2', 6379);
     $key = randString(32);
 
     $response = $redis->ping();

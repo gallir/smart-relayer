@@ -2,8 +2,6 @@ package lib
 
 import (
 	"log"
-	"strconv"
-	"strings"
 
 	"net/url"
 
@@ -18,7 +16,7 @@ type Config struct {
 type RelayerConfig struct {
 	Protocol string
 	Mode     string
-	Listen   int
+	Listen   string
 	Url      string
 }
 
@@ -31,6 +29,15 @@ func ReadConfig(filename string) (config *Config, err error) {
 	return
 }
 
+func (c *RelayerConfig) Scheme() (scheme string) {
+	u, err := url.Parse(c.Url)
+	if err != nil {
+		log.Fatal(err)
+	}
+	scheme = u.Scheme
+	return
+}
+
 func (c *RelayerConfig) Host() (host string) {
 	u, err := url.Parse(c.Url)
 	if err != nil {
@@ -40,21 +47,24 @@ func (c *RelayerConfig) Host() (host string) {
 	return
 }
 
-func (c *RelayerConfig) Port() (port int) {
-	host := c.Host()
-	hostPort := strings.Split(host, ":")
-	if len(hostPort) > 1 {
-		port, _ = strconv.Atoi(hostPort[1])
-	} else {
-		port = 0
+func (c *RelayerConfig) ListenScheme() (scheme string) {
+	u, err := url.Parse(c.Listen)
+	if err != nil {
+		log.Fatal(err)
 	}
+	scheme = u.Scheme
 	return
 }
 
-func (c *RelayerConfig) Proto() (proto string) {
-	u, err := url.Parse(c.Url)
-	if err != nil || u.Scheme == "" {
-		return "tcp"
+func (c *RelayerConfig) ListenHost() (host string) {
+	u, err := url.Parse(c.Listen)
+	if err != nil {
+		log.Fatal(err)
 	}
-	return u.Scheme
+	if u.Host == "" {
+		host = u.Path
+	} else {
+		host = u.Host
+	}
+	return
 }

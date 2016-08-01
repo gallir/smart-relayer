@@ -17,7 +17,7 @@ func NewClient(s *Server) (*Client, error) {
 	}
 
 	clt.channel = make(chan *Request, requestBufferSize)
-	lib.Debugf("Client %d for target %s ready", clt.server.config.Listen, clt.server.config.Host())
+	lib.Debugf("Client %s for target %s ready", clt.server.config.Listen, clt.server.config.Host())
 
 	return clt, nil
 }
@@ -40,7 +40,7 @@ func (clt *Client) connect() bool {
 	clt.Lock()
 	defer clt.Unlock()
 
-	conn, err := net.DialTimeout("tcp", clt.server.config.Host(), connectTimeout)
+	conn, err := net.DialTimeout(clt.server.config.Scheme(), clt.server.config.Host(), connectTimeout)
 	if err != nil {
 		log.Println("Failed to connect to", clt.server.config.Host())
 		clt.conn = nil

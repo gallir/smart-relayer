@@ -7,7 +7,7 @@ type Relayer interface {
 	Start() error
 	Reload(*RelayerConfig)
 	Protocol() string
-	Port() int
+	Listen() string
 }
 
 type MainConfig struct {
