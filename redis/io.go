@@ -10,8 +10,8 @@ import (
 	"github.com/gallir/smart-relayer/lib"
 )
 
-// Conn keeps the status of the connection to a server
-type RedisIO struct {
+// RedisIO keeps the status of the connection to a server
+type IO struct {
 	NetBuf   *lib.Netbuf
 	Database int
 }
@@ -20,26 +20,26 @@ const (
 	maxBufCount = 1000 // To protect for very large buffer consuming lot of memory
 )
 
-func NewConn(netConn net.Conn, readTimeout, writeTimeout time.Duration) *RedisIO {
-	cn := &RedisIO{
+func NewConn(netConn net.Conn, readTimeout, writeTimeout time.Duration) *IO {
+	cn := &IO{
 		NetBuf: lib.NewNetbuf(netConn, readTimeout, writeTimeout),
 	}
 	return cn
 }
 
-func (cn *RedisIO) IsStale(timeout time.Duration) bool {
+func (cn *IO) IsStale(timeout time.Duration) bool {
 	return cn.NetBuf.IsStale(timeout)
 }
 
-func (cn *RedisIO) Write(b []byte) (int, error) {
+func (cn *IO) Write(b []byte) (int, error) {
 	return cn.NetBuf.Write(b)
 }
 
-func (cn *RedisIO) Close() error {
+func (cn *IO) Close() error {
 	return cn.NetBuf.Close()
 }
 
-func (cn *RedisIO) Read(r *Request, parseCommand bool) ([]byte, error) {
+func (cn *IO) Read(r *Request, parseCommand bool) ([]byte, error) {
 	line, err := cn.NetBuf.ReadLine()
 	if err != nil {
 		return nil, err

@@ -12,9 +12,9 @@ import (
 	"github.com/gallir/smart-relayer/lib"
 )
 
-// It stores the data for each client request
+// Request stores the data for each client request
 type Request struct {
-	Conn    *RedisIO
+	Conn    *IO
 	Command []byte
 	//Bytes    []byte
 	Buffer   *bytes.Buffer
@@ -34,7 +34,7 @@ type Server struct {
 type Client struct {
 	sync.Mutex
 	server       *Server
-	conn         *RedisIO
+	conn         *IO
 	channel      chan *Request // The server sends the requests via this channel
 	database     int           // The current selected database
 	sentRequests chan *Request // Requests sent to the server
@@ -117,7 +117,7 @@ func (srv *Server) Listen() string {
 	return srv.config.Listen
 }
 
-// Serve accepts incoming connections on the Listener l
+// Start accepts incoming connections on the Listener l
 func (srv *Server) Start() error {
 	connType := srv.config.ListenScheme()
 	addr := srv.config.ListenHost()
@@ -184,7 +184,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 	}
 }
 
-func (srv *Server) serveClient(conn *RedisIO) (err error) {
+func (srv *Server) serveClient(conn *IO) (err error) {
 	defer func() {
 		if err != nil {
 			fmt.Fprintf(conn, "-%s\n", err)
