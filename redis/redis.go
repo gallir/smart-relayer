@@ -178,7 +178,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 		srv.Mode = modeSync
 	}
 	if reload {
-		log.Printf("Reloading redis server at port %d for target %s", srv.config.Listen, srv.config.Host())
+		log.Printf("Reloading redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
 		srv.client.channel <- &protoClientReload
 
 	}
