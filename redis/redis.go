@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/gallir/smart-relayer/lib"
@@ -25,19 +24,8 @@ type Request struct {
 // Server is the thread that listen for clients' connections
 type Server struct {
 	config lib.RelayerConfig
-	client *Client
-	Mode   int
+	mode   int
 	done   chan bool
-}
-
-// Client is the thread that connect to the remote redis server
-type Client struct {
-	sync.Mutex
-	server       *Server
-	conn         *IO
-	channel      chan *Request // The server sends the requests via this channel
-	database     int           // The current selected database
-	sentRequests chan *Request // Requests sent to the server
 }
 
 const (
@@ -146,12 +134,12 @@ func (srv *Server) Start() error {
 	go func() {
 		defer func() {
 			l.Close()
-			srv.client.Exit()
 			srv.done <- true
 		}()
 
-		srv.client, _ = NewClient(srv)
-		go srv.client.Listen()
+		client, _ := NewClient(srv)
+		defer client.Exit()
+		go client.Listen()
 
 		for {
 			netConn, err := l.Accept()
@@ -159,7 +147,7 @@ func (srv *Server) Start() error {
 				return
 			}
 			conn := NewConn(netConn, localReadTimeout, writeTimeout)
-			go srv.serveClient(conn)
+			go srv.serveClient(client, conn)
 		}
 	}()
 
@@ -173,18 +161,27 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 	}
 	srv.config = *c // Save a copy
 	if c.Mode == "smart" {
-		srv.Mode = modeSmart
+		srv.mode = modeSmart
 	} else {
-		srv.Mode = modeSync
+		srv.mode = modeSync
 	}
 	if reload {
 		log.Printf("Reloading redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
-		srv.client.channel <- &protoClientReload
+		// TODO: pool reload
+		// srv.client.requestsChan <- &protoClientReload
 
 	}
 }
 
-func (srv *Server) serveClient(conn *IO) (err error) {
+func (srv *Server) Mode() int {
+	return srv.mode
+}
+
+func (srv *Server) Config() *lib.RelayerConfig {
+	return &srv.config
+}
+
+func (srv *Server) serveClient(client *Client, conn *IO) (err error) {
 	defer func() {
 		if err != nil {
 			fmt.Fprintf(conn, "-%s\n", err)
@@ -212,18 +209,18 @@ func (srv *Server) serveClient(conn *IO) (err error) {
 		req.Database = conn.Database
 
 		// Smart mode, answer immediately and forget
-		if srv.Mode == modeSmart {
+		if srv.mode == modeSmart {
 			fastResponse, ok := commands[string(req.Command)]
 			if ok {
 				conn.NetBuf.Write(fastResponse)
-				srv.client.channel <- &req
+				client.requestsChan <- &req
 				continue
 			}
 		}
 
 		// Synchronized mode
 		req.Channel = responseCh
-		srv.client.channel <- &req
+		client.requestsChan <- &req
 		response := <-responseCh
 		conn.NetBuf.Write(response)
 	}
