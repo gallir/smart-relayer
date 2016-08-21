@@ -9,7 +9,6 @@ type Relayer interface {
 	Protocol() string
 	Listen() string
 	Config() *RelayerConfig
-	Mode() int
 }
 
 type MainConfig struct {

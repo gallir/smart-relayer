@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"log"
 	"math/rand"
 	"sync"
 
@@ -24,19 +25,33 @@ type pool struct {
 }
 
 // New returns a new pool manager
-func newPool(server *Server, max, maxIdle int) (p *pool) {
-	if max == 0 {
-		max = 1 // Default one connections
-	}
+func newPool(server *Server, c *lib.RelayerConfig) (p *pool) {
 	p = &pool{
-		server:  server,
-		max:     max,
-		maxIdle: maxIdle,
+		server: server,
 	}
-	p.clients = make([]*elem, 0, max)
-	p.free = make([]*elem, 0, max)
-	p.idle = make([]*elem, 0, max)
+	p.readConfig(c)
+	p.clients = make([]*elem, 0, p.max)
+	p.free = make([]*elem, 0, p.max)
+	p.idle = make([]*elem, 0, p.max)
 	return
+}
+
+func (p *pool) readConfig(c *lib.RelayerConfig) {
+	p.max = c.MaxConnections
+	if p.max <= 0 {
+		p.max = 1 // Default number of connections
+	}
+	p.maxIdle = c.MaxIdleConnections
+
+}
+
+func (p *pool) reset(c *lib.RelayerConfig) {
+	for _, e := range p.clients {
+		e.client.exit()
+	}
+	p.clients = nil
+	p.free = nil
+	p.idle = nil
 }
 
 func (p *pool) get() (e *elem) {
@@ -61,6 +76,11 @@ func (p *pool) close(e *elem) {
 	p.Lock()
 	defer p.Unlock()
 
+	if e.id >= len(p.clients) || p.clients[e.id].client != e.client {
+		log.Println("Pool: tried to close a non existing client")
+		return
+	}
+
 	e.counter--
 	if e.counter == 0 {
 		if p.maxIdle > 0 && len(p.free) > p.maxIdle {
@@ -73,7 +93,7 @@ func (p *pool) close(e *elem) {
 }
 
 func (p *pool) _createElem() (e *elem) {
-	cl := NewClient(p.server)
+	cl := newClient(p.server)
 	e = &elem{
 		id:     len(p.clients),
 		client: cl,
@@ -91,7 +111,11 @@ func (p *pool) _pickNonFree() (e *elem) {
 		// lib.Debugf("Pool: picked from idle %d", e.id)
 	} else {
 		// Otherwise pick a random element from all
-		e = p.clients[rand.Intn(len(p.clients))]
+		elems := len(p.clients)
+		if elems > p.max {
+			elems = p.max
+		}
+		e = p.clients[rand.Intn(elems)]
 	}
 	return
 }

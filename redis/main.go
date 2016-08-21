@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/gallir/smart-relayer/lib"
@@ -13,16 +14,16 @@ import (
 
 // Request stores the data for each client request
 type Request struct {
-	Conn    *Parser
-	Command []byte
-	//Bytes    []byte
-	Buffer   *bytes.Buffer
-	Channel  chan []byte // Channel to send the response to the original client
-	Database int         // The current database at the time the request was issued
+	parser          *Parser
+	command         []byte
+	buffer          *bytes.Buffer
+	responseChannel chan []byte // Channel to send the response to the original client
+	database        int         // The current database at the time the request was issued
 }
 
 // Server is the thread that listen for clients' connections
 type Server struct {
+	sync.Mutex
 	config lib.RelayerConfig
 	pool   *pool
 	mode   int
@@ -54,9 +55,7 @@ var (
 	protoPing                  = []byte("PING\r\n")
 	protoPong                  = []byte("+PONG\r\n")
 	protoKO                    = []byte("-Error\r\n")
-	protoClientCloseConnection = Request{Command: closeConnectionCommand}
-	protoClientReload          = Request{Command: reloadCommand}
-	protoClientExit            = Request{Command: exitCommand}
+	protoClientCloseConnection = Request{command: closeConnectionCommand}
 )
 
 var commands map[string][]byte
@@ -94,7 +93,7 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done: done,
 	}
-	srv.pool = newPool(srv, c.MaxConnections, c.MaxIdleConnections)
+	srv.pool = newPool(srv, &c)
 	srv.Reload(&c)
 	return srv, nil
 }
@@ -109,6 +108,9 @@ func (srv *Server) Listen() string {
 
 // Start accepts incoming connections on the Listener l
 func (srv *Server) Start() error {
+	srv.Lock()
+	defer srv.Unlock()
+
 	connType := srv.config.ListenScheme()
 	addr := srv.config.ListenHost()
 
@@ -140,11 +142,6 @@ func (srv *Server) Start() error {
 			srv.done <- true
 		}()
 
-		//client := NewClient(srv)
-		// TODO:
-		//defer client.Exit()
-		// go client.Listen()
-
 		for {
 			netConn, err := l.Accept()
 			if err != nil {
@@ -158,9 +155,12 @@ func (srv *Server) Start() error {
 }
 
 func (srv *Server) Reload(c *lib.RelayerConfig) {
-	reload := false
-	if srv.config.Url != "" {
-		reload = true
+	srv.Lock()
+	defer srv.Unlock()
+
+	reset := false
+	if srv.config.Url != "" && srv.config.Url != c.Url {
+		reset = true
 	}
 	srv.config = *c // Save a copy
 	if c.Mode == "smart" {
@@ -168,16 +168,14 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 	} else {
 		srv.mode = modeSync
 	}
-	if reload {
-		log.Printf("Reloading redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
-		// TODO: pool reload
-		// srv.client.requestsChan <- &protoClientReload
-
+	if reset {
+		log.Printf("Reseting redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
+		srv.pool.reset(c)
+		srv.pool = newPool(srv, c)
+	} else {
+		log.Printf("Upgrading redis config at port %s for target %s", srv.config.Listen, srv.config.Host())
+		srv.pool.readConfig(c)
 	}
-}
-
-func (srv *Server) Mode() int {
-	return srv.mode
 }
 
 func (srv *Server) Config() *lib.RelayerConfig {
@@ -192,48 +190,86 @@ func (srv *Server) serveClient(netConn net.Conn) (err error) {
 		if err != nil {
 			fmt.Fprintf(parser, "-%s\n", err)
 		}
-		parser.Close()
+		parser.close()
 	}()
 
 	pooled := srv.pool.get()
 	defer srv.pool.close(pooled)
 	client := pooled.client
-
-	// lib.Debugf("New connection from %s", netConn.RemoteAddr())
-	// started := time.Now()
 	responseCh := make(chan []byte, 1)
 
 	for {
-		req := Request{Conn: parser}
-		_, err = parser.Read(&req, true)
+		req := Request{parser: parser}
+		_, err = parser.read(&req, true)
 		if err != nil {
 			break
 		}
 
 		// QUIT received from client
-		if bytes.Compare(req.Command, quitCommand) == 0 {
-			parser.NetBuf.Write(protoOK)
+		if bytes.Compare(req.command, quitCommand) == 0 {
+			parser.netBuf.Write(protoOK)
 			break
 		}
 
-		req.Database = parser.Database
+		req.database = parser.database
 
 		// Smart mode, answer immediately and forget
 		if srv.mode == modeSmart {
-			fastResponse, ok := commands[string(req.Command)]
+			fastResponse, ok := commands[string(req.command)]
 			if ok {
-				parser.NetBuf.Write(fastResponse)
-				client.requestsChan <- &req
+				parser.netBuf.Write(fastResponse)
+				ok = sendAsyncRequest(client.requestChan, &req)
+				if !ok {
+					log.Printf("Error sending request to redis client, exiting")
+					return
+				}
 				continue
 			}
 		}
 
 		// Synchronized mode
-		req.Channel = responseCh
-		client.requestsChan <- &req
+		req.responseChannel = responseCh
+
+		ok := sendAsyncRequest(client.requestChan, &req)
+		if !ok {
+			log.Printf("Error sending request to redis client, exiting")
+			return
+		}
 		response := <-responseCh
-		parser.NetBuf.Write(response)
+		parser.netBuf.Write(response)
 	}
 	// lib.Debugf("Finished session %s", time.Since(started))
 	return err
+}
+
+func sendAsyncRequest(c chan *Request, r *Request) bool {
+	defer recover() // To avoid panic due to closed channels
+
+	if c == nil {
+		return false
+	}
+
+	select {
+	case c <- r:
+		return true
+	default:
+		lib.Debugf("Error sending request")
+		return false
+	}
+}
+
+func sendAsyncResponse(c chan []byte, b []byte) bool {
+	defer recover() // To avoid panic due to closed channels
+
+	if c == nil {
+		return false
+	}
+
+	select {
+	case c <- b:
+		return true
+	default:
+		lib.Debugf("Error sending response %s", string(b))
+		return false
+	}
 }

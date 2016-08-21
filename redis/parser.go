@@ -12,8 +12,8 @@ import (
 
 // RedisIO keeps the status of the connection to a server
 type Parser struct {
-	NetBuf   *lib.Netbuf
-	Database int
+	netBuf   *lib.Netbuf
+	database int
 }
 
 const (
@@ -21,26 +21,26 @@ const (
 )
 
 func newParser(netConn net.Conn, readTimeout, writeTimeout time.Duration) *Parser {
-	cn := &Parser{
-		NetBuf: lib.NewNetbuf(netConn, readTimeout, writeTimeout),
+	p := &Parser{
+		netBuf: lib.NewNetbuf(netConn, readTimeout, writeTimeout),
 	}
-	return cn
+	return p
 }
 
-func (cn *Parser) IsStale(timeout time.Duration) bool {
-	return cn.NetBuf.IsStale(timeout)
+func (p *Parser) isStale(timeout time.Duration) bool {
+	return p.netBuf.IsStale(timeout)
 }
 
-func (cn *Parser) Write(b []byte) (int, error) {
-	return cn.NetBuf.Write(b)
+func (p *Parser) Write(b []byte) (int, error) {
+	return p.netBuf.Write(b)
 }
 
-func (cn *Parser) Close() error {
-	return cn.NetBuf.Close()
+func (p *Parser) close() error {
+	return p.netBuf.Close()
 }
 
-func (cn *Parser) Read(r *Request, parseCommand bool) ([]byte, error) {
-	line, err := cn.NetBuf.ReadLine()
+func (p *Parser) read(r *Request, parseCommand bool) ([]byte, error) {
+	line, err := p.netBuf.ReadLine()
 	if err != nil {
 		return nil, err
 	}
@@ -49,22 +49,22 @@ func (cn *Parser) Read(r *Request, parseCommand bool) ([]byte, error) {
 		return nil, malformed("short response line", string(line))
 	}
 
-	if r.Buffer == nil {
-		r.Buffer = new(bytes.Buffer)
+	if r.buffer == nil {
+		r.buffer = new(bytes.Buffer)
 	}
 
 	switch line[0] {
 	case '+', '-', ':':
-		r.Buffer.Write(line)
+		r.buffer.Write(line)
 		return line, nil
 	case '$':
 		n, err := strconv.Atoi(string(line[1 : len(line)-2]))
 		if err != nil {
 			return nil, err
 		}
-		r.Buffer.Write(line)
+		r.buffer.Write(line)
 		if n > 0 {
-			b, err := cn.NetBuf.ReadN(n + 2)
+			b, err := p.netBuf.ReadN(n + 2)
 			if err != nil {
 				return nil, err
 			}
@@ -73,39 +73,39 @@ func (cn *Parser) Read(r *Request, parseCommand bool) ([]byte, error) {
 				return nil, malformedMissingCRLF()
 			}
 			if parseCommand {
-				if len(r.Command) == 0 {
-					r.Command = bytes.ToUpper(b[:len(b)-2])
+				if len(r.command) == 0 {
+					r.command = bytes.ToUpper(b[:len(b)-2])
 				} else {
-					if bytes.Compare(r.Command, selectCommand) == 0 {
+					if bytes.Compare(r.command, selectCommand) == 0 {
 						n, err = strconv.Atoi(string(b[0 : len(b)-2]))
 						if err == nil {
-							cn.Database = n
+							p.database = n
 						}
 					}
 				}
 			}
-			r.Buffer.Write(b)
+			r.buffer.Write(b)
 		}
-		return r.Command, nil
+		return r.command, nil
 	case '*':
 		n, err := strconv.Atoi(string(line[1 : len(line)-2]))
 		if n < 0 || err != nil {
 			return nil, err
 		}
-		r.Buffer.Write(line)
+		r.buffer.Write(line)
 		for i := 0; i < n; i++ {
-			_, err := cn.Read(r, parseCommand)
+			_, err := p.read(r, parseCommand)
 			if err != nil {
 				return nil, malformed("*<numberOfArguments>", string(line))
 			}
 		}
-		return r.Command, nil
+		return r.command, nil
 	default:
 		// Inline request
-		r.Buffer.Write(line)
+		r.buffer.Write(line)
 		parts := bytes.Split(line, []byte(" "))
 		if len(parts) > 0 {
-			r.Command = bytes.ToUpper(bytes.TrimSpace(parts[0]))
+			r.command = bytes.ToUpper(bytes.TrimSpace(parts[0]))
 		}
 		return line, nil
 	}

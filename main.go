@@ -49,7 +49,6 @@ func startOrReload() bool {
 			}
 		} else {
 			// The relayer exists, reload it
-			lib.Debugf("Reloading relayer from %d to %s", conf.Listen, conf.Url)
 			srv.Reload(&conf)
 		}
 	}
