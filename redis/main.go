@@ -169,11 +169,11 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 		srv.mode = modeSync
 	}
 	if reset {
-		log.Printf("Reseting redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
+		log.Printf("Reload and reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
 		srv.pool.reset(c)
 		srv.pool = newPool(srv, c)
 	} else {
-		log.Printf("Upgrading redis config at port %s for target %s", srv.config.Listen, srv.config.Host())
+		log.Printf("Reload redis config at port %s for target %s", srv.config.Listen, srv.config.Host())
 		srv.pool.readConfig(c)
 	}
 }

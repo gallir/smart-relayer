@@ -31,6 +31,7 @@ func (p *Parser) isStale(timeout time.Duration) bool {
 	return p.netBuf.IsStale(timeout)
 }
 
+// Write is exported to comply with io.Writer interface
 func (p *Parser) Write(b []byte) (int, error) {
 	return p.netBuf.Write(b)
 }
