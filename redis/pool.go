@@ -25,6 +25,9 @@ type pool struct {
 
 // New returns a new pool manager
 func newPool(server *Server, max, maxIdle int) (p *pool) {
+	if max == 0 {
+		max = 1 // Default one connections
+	}
 	p = &pool{
 		server:  server,
 		max:     max,
@@ -62,7 +65,7 @@ func (p *pool) close(e *elem) {
 	if e.counter == 0 {
 		if p.maxIdle > 0 && len(p.free) > p.maxIdle {
 			p.idle = append(p.idle, e)
-			lib.Debugf("Pool: added to idle %d", e.id)
+			// lib.Debugf("Pool: added to idle %d", e.id)
 		} else {
 			p.free = append(p.free, e)
 		}
@@ -85,7 +88,7 @@ func (p *pool) _pickNonFree() (e *elem) {
 		// Select the last element added to idle
 		e = p.idle[l-1]
 		p.idle = p.idle[:l-1]
-		lib.Debugf("Pool: picked from idle %d", e.id)
+		// lib.Debugf("Pool: picked from idle %d", e.id)
 	} else {
 		// Otherwise pick a random element from all
 		e = p.clients[rand.Intn(len(p.clients))]

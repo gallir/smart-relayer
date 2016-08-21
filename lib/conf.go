@@ -14,10 +14,12 @@ type Config struct {
 }
 
 type RelayerConfig struct {
-	Protocol string
-	Mode     string
-	Listen   string
-	Url      string
+	Protocol           string
+	Mode               string
+	Listen             string
+	Url                string
+	MaxConnections     int
+	MaxIdleConnections int
 }
 
 func ReadConfig(filename string) (config *Config, err error) {
