@@ -94,7 +94,7 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done: done,
 	}
-	srv.pool = newPool(srv, 5)
+	srv.pool = newPool(srv, 10, 3)
 	srv.Reload(&c)
 	return srv, nil
 }

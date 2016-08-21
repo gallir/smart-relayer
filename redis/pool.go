@@ -14,20 +14,23 @@ type elem struct {
 // Pool keep a list of clients' elements
 type pool struct {
 	sync.Mutex
-	clients []*elem
-	free    []*elem
-	max     int
-	server  *Server
+	clients      []*elem
+	free         []*elem
+	idle         []*elem
+	max, maxIdle int
+	server       *Server
 }
 
 // New returns a new pool manager
-func newPool(server *Server, max int) (p *pool) {
+func newPool(server *Server, max, maxIdle int) (p *pool) {
 	p = &pool{
-		server: server,
-		max:    max,
+		server:  server,
+		max:     max,
+		maxIdle: maxIdle,
 	}
 	p.clients = make([]*elem, 0, max)
 	p.free = make([]*elem, 0, max)
+	p.idle = make([]*elem, 0, max)
 	return
 }
 
@@ -39,7 +42,7 @@ func (p *pool) get() (e *elem) {
 		if len(p.clients) < p.max {
 			e = p._createElem()
 		} else {
-			e = p.clients[rand.Intn(len(p.clients))]
+			e = p._pickNonFree()
 		}
 	} else {
 		e = p.free[0]
@@ -55,7 +58,11 @@ func (p *pool) close(e *elem) {
 
 	e.counter--
 	if e.counter == 0 {
-		p.free = append(p.free, e)
+		if p.maxIdle > 0 && len(p.free) > p.maxIdle {
+			p.idle = append(p.idle, e)
+		} else {
+			p.free = append(p.free, e)
+		}
 	}
 }
 
@@ -66,5 +73,17 @@ func (p *pool) _createElem() (e *elem) {
 		client: cl,
 	}
 	p.clients = append(p.clients, e)
+	return
+}
+
+func (p *pool) _pickNonFree() (e *elem) {
+	if l := len(p.idle); l > 0 {
+		// Select the last element added to idle
+		e = p.idle[l-1]
+		p.idle = p.idle[:l-1]
+	} else {
+		// Otherwise pick a random element from all
+		e = p.clients[rand.Intn(len(p.clients))]
+	}
 	return
 }
