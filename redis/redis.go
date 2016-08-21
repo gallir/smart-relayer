@@ -94,7 +94,7 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done: done,
 	}
-	srv.pool = newPool(srv, 10, 3)
+	srv.pool = newPool(srv, 20, 10)
 	srv.Reload(&c)
 	return srv, nil
 }
@@ -198,7 +198,6 @@ func (srv *Server) serveClient(netConn net.Conn) (err error) {
 	pooled := srv.pool.get()
 	defer srv.pool.close(pooled)
 	client := pooled.client
-	lib.Debugf("pooled client %v\n", pooled)
 
 	lib.Debugf("New connection from %s", netConn.RemoteAddr())
 	responseCh := make(chan []byte, 1)
