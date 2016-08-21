@@ -15,22 +15,23 @@ import (
 type Client struct {
 	sync.Mutex
 	server        lib.Relayer
-	conn          *IO
+	conn          *Parser
 	requestsChan  chan *Request // The server sends the requests via this channel
 	database      int           // The current selected database
 	responsesChan chan *Request // Requests sent to the server
 }
 
 // NewClient creates a new client that connect to a Redis server
-func NewClient(s lib.Relayer) (*Client, error) {
+func NewClient(s lib.Relayer) *Client {
 	clt := &Client{
 		server: s,
 	}
 
 	clt.requestsChan = make(chan *Request, requestBufferSize)
 	lib.Debugf("Client %s for target %s ready", clt.server.Config().Listen, clt.server.Config().Host())
+	go clt.Listen()
 
-	return clt, nil
+	return clt
 }
 
 func (clt *Client) checkIdle() {
@@ -58,7 +59,7 @@ func (clt *Client) connect() bool {
 		return false
 	}
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
-	clt.conn = NewConn(conn, serverReadTimeout, writeTimeout)
+	clt.conn = newParser(conn, serverReadTimeout, writeTimeout)
 	clt.createRequestChannel()
 	go clt.netListener()
 	return true
@@ -81,13 +82,13 @@ func (clt *Client) Listen() {
 		}
 		if bytes.Compare(request.Command, closeConnectionCommand) == 0 {
 			lib.Debugf("Closing by idle %s", clt.server.Config().Host())
-			clt.close()
+			clt.Close()
 			continue
 		}
 		if bytes.Compare(request.Command, reloadCommand) == 0 {
 			if currentConfig.Host() != clt.server.Config().Host() {
 				lib.Debugf("Closing by reload %s -> %s", currentConfig.Host(), clt.server.Config().Host())
-				clt.close()
+				clt.Close()
 			}
 			currentConfig = clt.server.Config()
 			continue
@@ -104,7 +105,7 @@ func (clt *Client) Listen() {
 				default:
 				}
 			}
-			clt.close()
+			clt.Close()
 			continue
 		}
 	}
@@ -134,7 +135,7 @@ func (clt *Client) netListener() {
 		_, err := conn.Read(resp, false)
 		if err != nil {
 			log.Println("Error in listener", err)
-			clt.close()
+			clt.Close()
 			return
 		}
 
@@ -169,7 +170,7 @@ func (clt *Client) write(r *Request) (int, error) {
 			_, err := clt.write(&databaseChanger)
 			if err != nil {
 				log.Println("Error changing database", err)
-				clt.close()
+				clt.Close()
 				return 0, fmt.Errorf("Error in select")
 			}
 		}
@@ -178,7 +179,7 @@ func (clt *Client) write(r *Request) (int, error) {
 	c, err := clt.conn.Write(bytes)
 
 	if err != nil {
-		clt.close()
+		clt.Close()
 		if neterr, ok := err.(net.Error); !ok || !neterr.Timeout() {
 			log.Println("Failed in write:", err)
 			return 0, err
@@ -189,7 +190,7 @@ func (clt *Client) write(r *Request) (int, error) {
 	return c, err
 }
 
-func (clt *Client) close() {
+func (clt *Client) Close() {
 	clt.Lock()
 	defer clt.Unlock()
 
@@ -236,6 +237,6 @@ func (clt *Client) purgePending() {
 }
 
 func (clt *Client) Exit() {
-	clt.close()
+	clt.Close()
 	clt.requestsChan <- &protoClientExit
 }

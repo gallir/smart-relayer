@@ -11,7 +11,7 @@ import (
 )
 
 // RedisIO keeps the status of the connection to a server
-type IO struct {
+type Parser struct {
 	NetBuf   *lib.Netbuf
 	Database int
 }
@@ -20,26 +20,26 @@ const (
 	maxBufCount = 1000 // To protect for very large buffer consuming lot of memory
 )
 
-func NewConn(netConn net.Conn, readTimeout, writeTimeout time.Duration) *IO {
-	cn := &IO{
+func newParser(netConn net.Conn, readTimeout, writeTimeout time.Duration) *Parser {
+	cn := &Parser{
 		NetBuf: lib.NewNetbuf(netConn, readTimeout, writeTimeout),
 	}
 	return cn
 }
 
-func (cn *IO) IsStale(timeout time.Duration) bool {
+func (cn *Parser) IsStale(timeout time.Duration) bool {
 	return cn.NetBuf.IsStale(timeout)
 }
 
-func (cn *IO) Write(b []byte) (int, error) {
+func (cn *Parser) Write(b []byte) (int, error) {
 	return cn.NetBuf.Write(b)
 }
 
-func (cn *IO) Close() error {
+func (cn *Parser) Close() error {
 	return cn.NetBuf.Close()
 }
 
-func (cn *IO) Read(r *Request, parseCommand bool) ([]byte, error) {
+func (cn *Parser) Read(r *Request, parseCommand bool) ([]byte, error) {
 	line, err := cn.NetBuf.ReadLine()
 	if err != nil {
 		return nil, err

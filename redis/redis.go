@@ -13,7 +13,7 @@ import (
 
 // Request stores the data for each client request
 type Request struct {
-	Conn    *IO
+	Conn    *Parser
 	Command []byte
 	//Bytes    []byte
 	Buffer   *bytes.Buffer
@@ -24,6 +24,7 @@ type Request struct {
 // Server is the thread that listen for clients' connections
 type Server struct {
 	config lib.RelayerConfig
+	pool   *pool
 	mode   int
 	done   chan bool
 }
@@ -88,11 +89,12 @@ func init() {
 	}
 }
 
-// New creates a new Redis server
+// New creates a new Redis local server
 func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done: done,
 	}
+	srv.pool = newPool(srv, 5)
 	srv.Reload(&c)
 	return srv, nil
 }
@@ -131,23 +133,24 @@ func (srv *Server) Start() error {
 	}
 
 	log.Printf("Starting redis server at %s for target %s", addr, srv.config.Host())
+	// Serve a client
 	go func() {
 		defer func() {
 			l.Close()
 			srv.done <- true
 		}()
 
-		client, _ := NewClient(srv)
-		defer client.Exit()
-		go client.Listen()
+		//client := NewClient(srv)
+		// TODO:
+		//defer client.Exit()
+		// go client.Listen()
 
 		for {
 			netConn, err := l.Accept()
 			if err != nil {
 				return
 			}
-			conn := NewConn(netConn, localReadTimeout, writeTimeout)
-			go srv.serveClient(client, conn)
+			go srv.serveClient(netConn)
 		}
 	}()
 
@@ -181,38 +184,46 @@ func (srv *Server) Config() *lib.RelayerConfig {
 	return &srv.config
 }
 
-func (srv *Server) serveClient(client *Client, conn *IO) (err error) {
+func (srv *Server) serveClient(netConn net.Conn) (err error) {
+	defer netConn.Close()
+
+	parser := newParser(netConn, localReadTimeout, writeTimeout)
 	defer func() {
 		if err != nil {
-			fmt.Fprintf(conn, "-%s\n", err)
+			fmt.Fprintf(parser, "-%s\n", err)
 		}
-		conn.Close()
+		parser.Close()
 	}()
 
-	lib.Debugf("New connection from %s", conn.NetBuf.RemoteAddr())
+	pooled := srv.pool.get()
+	defer srv.pool.close(pooled)
+	client := pooled.client
+	lib.Debugf("pooled client %v\n", pooled)
+
+	lib.Debugf("New connection from %s", netConn.RemoteAddr())
 	responseCh := make(chan []byte, 1)
 	started := time.Now()
 
 	for {
-		req := Request{Conn: conn}
-		_, err = conn.Read(&req, true)
+		req := Request{Conn: parser}
+		_, err = parser.Read(&req, true)
 		if err != nil {
 			break
 		}
 
 		// QUIT received from client
 		if bytes.Compare(req.Command, quitCommand) == 0 {
-			conn.NetBuf.Write(protoOK)
+			parser.NetBuf.Write(protoOK)
 			break
 		}
 
-		req.Database = conn.Database
+		req.Database = parser.Database
 
 		// Smart mode, answer immediately and forget
 		if srv.mode == modeSmart {
 			fastResponse, ok := commands[string(req.Command)]
 			if ok {
-				conn.NetBuf.Write(fastResponse)
+				parser.NetBuf.Write(fastResponse)
 				client.requestsChan <- &req
 				continue
 			}
@@ -222,7 +233,7 @@ func (srv *Server) serveClient(client *Client, conn *IO) (err error) {
 		req.Channel = responseCh
 		client.requestsChan <- &req
 		response := <-responseCh
-		conn.NetBuf.Write(response)
+		parser.NetBuf.Write(response)
 	}
 	lib.Debugf("Finished session %s", time.Since(started))
 	return err
