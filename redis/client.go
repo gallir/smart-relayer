@@ -105,11 +105,7 @@ func (clt *Client) listen() {
 		_, err := clt.write(request)
 		if err != nil {
 			log.Println("Error writing:", err)
-
-			// Respond with KO to the client
-			if request.responseChannel != nil {
-				sendAsyncResponse(request.responseChannel, protoKO)
-			}
+			sendAsyncResponse(request.responseChannel, protoKO)
 			clt.close()
 			continue
 		}

@@ -2,7 +2,7 @@
 
 $redis = new Redis();
 
-$value = randString(40000);
+$value = randString(10000);
 
 $start = microtime(True);
 for ($i = 0; $i<1000; $i++) {

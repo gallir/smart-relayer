@@ -193,7 +193,11 @@ func (srv *Server) serveClient(netConn net.Conn) (err error) {
 		parser.close()
 	}()
 
-	pooled := srv.pool.get()
+	pooled, ok := srv.pool.get()
+	if !ok {
+		log.Println("Redis server, no clients available from pool")
+		return
+	}
 	defer srv.pool.close(pooled)
 	client := pooled.client
 	responseCh := make(chan []byte, 1)
@@ -233,6 +237,7 @@ func (srv *Server) serveClient(netConn net.Conn) (err error) {
 		ok := sendAsyncRequest(client.requestChan, &req)
 		if !ok {
 			log.Printf("Error sending request to redis client, exiting")
+			parser.netBuf.Write(protoKO)
 			return
 		}
 		response := <-responseCh
@@ -242,34 +247,65 @@ func (srv *Server) serveClient(netConn net.Conn) (err error) {
 	return err
 }
 
-func sendAsyncRequest(c chan *Request, r *Request) bool {
-	defer recover() // To avoid panic due to closed channels
+func sendRequest(c chan *Request, r *Request) (ok bool) {
+	defer func() {
+		e := recover() // To avoid panic due to closed channels
+		if e != nil {
+			log.Println("sendRequest: Recovered from error", e)
+			ok = false
+		}
+	}()
 
 	if c == nil {
 		return false
+	}
+
+	c <- r
+	return true
+}
+
+func sendAsyncRequest(c chan *Request, r *Request) (ok bool) {
+	defer func() {
+		e := recover() // To avoid panic due to closed channels
+		if e != nil {
+			log.Println("sendAsyncRequest: recovered from error", e)
+			ok = false
+		}
+	}()
+
+	if c == nil {
+		return
 	}
 
 	select {
 	case c <- r:
-		return true
+		ok = true
 	default:
 		lib.Debugf("Error sending request")
-		return false
+		ok = false
 	}
+	return
 }
 
-func sendAsyncResponse(c chan []byte, b []byte) bool {
-	defer recover() // To avoid panic due to closed channels
+func sendAsyncResponse(c chan []byte, b []byte) (ok bool) {
+	defer func() {
+		e := recover() // To avoid panic due to closed channels
+		if e != nil {
+			log.Println("sendAsyncResponse: recovered from error", e)
+			ok = false
+		}
+	}()
 
 	if c == nil {
-		return false
+		return
 	}
 
 	select {
 	case c <- b:
-		return true
+		ok = true
 	default:
 		lib.Debugf("Error sending response %s", string(b))
-		return false
+		ok = false
 	}
+	return
 }

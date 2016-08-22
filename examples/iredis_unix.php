@@ -1,11 +1,12 @@
 <?PHP
 
 
-$value = randString(100000);
+$value = randString(50000);
 
 $start = microtime(True);
 for ($i = 0; $i<1000; $i++) {
     $cli = phpiredis_connect('/tmp/redis.sock');
+    //$cli = phpiredis_connect('mamut.apsl.net', 6379);
     $key = randString(32);
     $response = phpiredis_command_bs($cli, array("PING"));
     if ($response != "PONG" && $response != "OK") {
