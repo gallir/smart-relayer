@@ -182,14 +182,11 @@ func (srv *Server) Config() *lib.RelayerConfig {
 	return &srv.config
 }
 
-func (srv *Server) serveClient(netConn net.Conn) (err error) {
+func (srv *Server) serveClient(netConn net.Conn) {
 	defer netConn.Close()
 
 	parser := newParser(netConn, localReadTimeout, writeTimeout)
 	defer func() {
-		if err != nil {
-			fmt.Fprintf(parser, "-%s\n", err)
-		}
 		parser.close()
 	}()
 
@@ -201,18 +198,19 @@ func (srv *Server) serveClient(netConn net.Conn) (err error) {
 	defer srv.pool.close(pooled)
 	client := pooled.client
 	responseCh := make(chan []byte, 1)
+	defer close(responseCh)
 
 	for {
 		req := Request{parser: parser}
-		_, err = parser.read(&req, true)
+		_, err := parser.read(&req, true)
 		if err != nil {
-			break
+			return
 		}
 
 		// QUIT received from client
 		if bytes.Compare(req.command, quitCommand) == 0 {
 			parser.netBuf.Write(protoOK)
-			break
+			return
 		}
 
 		req.database = parser.database
@@ -244,7 +242,7 @@ func (srv *Server) serveClient(netConn net.Conn) (err error) {
 		parser.netBuf.Write(response)
 	}
 	// lib.Debugf("Finished session %s", time.Since(started))
-	return err
+	return
 }
 
 func sendRequest(c chan *Request, r *Request) (ok bool) {

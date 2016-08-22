@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Netbuf is a read buufered net connection
+// Netbuf is a read buffered net connection
 type Netbuf struct {
 	conn         net.Conn
 	readBuf      *bufio.Reader

@@ -163,7 +163,7 @@ func (clt *Client) purgeRequests() {
 	}
 }
 
-func (clt *Client) write(r *Request) (int, error) {
+func (clt *Client) write(r *Request) (int64, error) {
 	if clt.parser == nil && !clt.connect() {
 		return 0, fmt.Errorf("Connection failed")
 	}
@@ -189,8 +189,7 @@ func (clt *Client) write(r *Request) (int, error) {
 			}
 		}
 	}
-	bytes := r.buffer.Bytes()
-	c, err := clt.parser.Write(bytes)
+	c, err := r.buffer.WriteTo(clt.parser.netBuf)
 
 	if err != nil {
 		clt.close()
@@ -200,6 +199,7 @@ func (clt *Client) write(r *Request) (int, error) {
 		}
 	}
 
+	r.buffer = nil // We don't need it anymore, don't use memory
 	clt.queueChan <- r
 	return c, err
 }
