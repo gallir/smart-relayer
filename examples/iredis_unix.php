@@ -1,12 +1,12 @@
 <?PHP
 
+$cli = phpiredis_connect('/tmp/redis.sock');
+//$cli = phpiredis_connect('mamut.apsl.net', 6379);
 
 $value = randString(50000);
 
 $start = microtime(True);
 for ($i = 0; $i<1000; $i++) {
-    $cli = phpiredis_connect('/tmp/redis.sock');
-    //$cli = phpiredis_connect('mamut.apsl.net', 6379);
     $key = randString(32);
     $response = phpiredis_command_bs($cli, array("PING"));
     if ($response != "PONG" && $response != "OK") {
@@ -18,6 +18,15 @@ for ($i = 0; $i<1000; $i++) {
         printf("Error in SET %s\n", $response);
         exit(1);
     }
+
+/*
+    $response = phpiredis_command_bs($cli, array("GET", $key));
+    if ($response != $value) {
+        printf("Error in GET %s\n", $key);
+        exit(1);
+    } 
+*/
+
     $response = phpiredis_command_bs($cli, array("HSET", "ROW", $key, $value));
     if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
         printf("Error in HSET %s\n", $response);

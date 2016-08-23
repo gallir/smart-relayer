@@ -203,7 +203,10 @@ func (srv *Server) serveClient(netConn net.Conn) {
 
 	active := true
 	defer func() {
+		srv.Lock()
 		active = false
+		srv.Unlock()
+		lib.Debugf("serveClient: connection closed")
 	}()
 
 	for {
@@ -225,12 +228,12 @@ func (srv *Server) serveClient(netConn net.Conn) {
 		if srv.mode == modeSmart {
 			fastResponse, ok := commands[string(req.command)]
 			if ok {
-				parser.netBuf.Write(fastResponse)
-				ok = sendAsyncRequest(client.requestChan, &req)
+				ok = sendRequest(client.requestChan, &req)
 				if !ok {
 					log.Printf("Error sending request to redis client, exiting")
 					return
 				}
+				parser.netBuf.Write(fastResponse)
 				continue
 			}
 		}
@@ -238,7 +241,7 @@ func (srv *Server) serveClient(netConn net.Conn) {
 		// Synchronized mode
 		req.responseChannel = responseCh
 
-		ok := sendAsyncRequest(client.requestChan, &req)
+		ok := sendRequest(client.requestChan, &req)
 		if !ok {
 			log.Printf("Error sending request to redis client, exiting")
 			parser.netBuf.Write(protoKO)
@@ -255,7 +258,7 @@ func sendRequest(c chan *Request, r *Request) (ok bool) {
 	defer func() {
 		e := recover() // To avoid panic due to closed channels
 		if e != nil {
-			log.Println("sendRequest: Recovered from error", e)
+			log.Printf("sendRequest: Recovered from error %s, channel length %d", e, len(c))
 			ok = false
 		}
 	}()
@@ -272,7 +275,7 @@ func sendAsyncRequest(c chan *Request, r *Request) (ok bool) {
 	defer func() {
 		e := recover() // To avoid panic due to closed channels
 		if e != nil {
-			log.Println("sendAsyncRequest: recovered from error", e)
+			log.Printf("sendAsyncRequest: Recovered from error %s, channel length %d", e, len(c))
 			ok = false
 		}
 	}()
@@ -285,7 +288,7 @@ func sendAsyncRequest(c chan *Request, r *Request) (ok bool) {
 	case c <- r:
 		ok = true
 	default:
-		lib.Debugf("Error sending request")
+		lib.Debugf("Error sending request, channel length %d", len(c))
 		ok = false
 	}
 	return
@@ -295,7 +298,7 @@ func sendAsyncResponse(c chan []byte, b []byte) (ok bool) {
 	defer func() {
 		e := recover() // To avoid panic due to closed channels
 		if e != nil {
-			log.Println("sendAsyncResponse: recovered from error", e)
+			log.Printf("sendAsyncResponse: Recovered from error %s, channel length %d", e, len(c))
 			ok = false
 		}
 	}()
@@ -308,7 +311,7 @@ func sendAsyncResponse(c chan []byte, b []byte) (ok bool) {
 	case c <- b:
 		ok = true
 	default:
-		lib.Debugf("Error sending response %s", string(b))
+		lib.Debugf("Error sending response %s channel length %d", string(b), len(c))
 		ok = false
 	}
 	return
