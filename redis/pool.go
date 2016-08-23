@@ -148,14 +148,16 @@ func (p *pool) _createElem() (e *elem) {
 	return
 }
 
-func (p *pool) _pickFree() (e *elem, ok bool) {
-	if len(p.free) == 0 {
+func (p *pool) _pickFree() (*elem, bool) {
+	l := len(p.free)
+	if l == 0 {
 		return nil, false
 	}
 
-	e = p.free[0]
+	e := p.free[l-1]
 	e.counter++
-	p.free = p.free[1:]
+	p.free = p.free[:l-1]
+
 	return e, true
 }
 

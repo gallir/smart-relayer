@@ -44,15 +44,15 @@ func (clt *Client) checkIdle() {
 	for {
 		clt.Lock()
 		conn := clt.conn
-		channel := clt.requestChan
+		ch := clt.requestChan
 		clt.Unlock()
 
-		if channel == nil {
+		if ch == nil || conn == nil {
 			return
 		}
 
-		if conn != nil && conn.IsStale(connectionIdleMax) {
-			sendAsyncRequest(channel, &protoClientCloseConnection)
+		if conn.IsStale(connectionIdleMax) {
+			sendAsyncRequest(ch, &protoClientCloseConnection)
 		}
 		time.Sleep(connectionIdleMax)
 	}

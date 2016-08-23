@@ -250,7 +250,7 @@ func sendRequest(c chan *Request, r *Request) (ok bool) {
 	}()
 
 	if c == nil {
-		log.Println("Nil channel")
+		lib.Debugf("Nil channel in send request")
 		return false
 	}
 
@@ -285,7 +285,7 @@ func sendAsyncResponse(c chan []byte, b []byte) (ok bool) {
 	defer func() {
 		e := recover() // To avoid panic due to closed channels
 		if e != nil {
-			log.Printf("sendAsyncResponse: Recovered from error %s, channel length %d", e, len(c))
+			log.Printf("sendAssendAsyncResponseyncRequest: Recovered from error %s, channel length %d", e, len(c))
 			ok = false
 		}
 	}()
