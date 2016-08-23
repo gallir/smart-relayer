@@ -14,12 +14,10 @@ import (
 
 // Request stores the data for each client request
 type Request struct {
-	parser          *Parser
 	command         []byte
 	buffer          *bytes.Buffer
 	responseChannel chan []byte // Channel to send the response to the original client
 	database        int         // The current database at the time the request was issued
-	active          *bool       // Indicates that the client is still connected to the relayer
 }
 
 // Server is the thread that listen for clients' connections
@@ -184,12 +182,10 @@ func (srv *Server) Config() *lib.RelayerConfig {
 }
 
 func (srv *Server) serveClient(netConn net.Conn) {
+	conn := lib.NewNetbuf(netConn, localReadTimeout, writeTimeout)
 	defer netConn.Close()
 
-	parser := newParser(netConn, localReadTimeout, writeTimeout)
-	defer func() {
-		parser.close()
-	}()
+	parser := newParser(conn)
 
 	pooled, ok := srv.pool.get()
 	if !ok {
@@ -201,16 +197,8 @@ func (srv *Server) serveClient(netConn net.Conn) {
 	responseCh := make(chan []byte, 1)
 	defer close(responseCh)
 
-	active := true
-	defer func() {
-		srv.Lock()
-		active = false
-		srv.Unlock()
-		lib.Debugf("serveClient: connection closed")
-	}()
-
 	for {
-		req := Request{parser: parser, active: &active}
+		req := Request{}
 		_, err := parser.read(&req, true)
 		if err != nil {
 			return
@@ -218,7 +206,7 @@ func (srv *Server) serveClient(netConn net.Conn) {
 
 		// QUIT received from client
 		if bytes.Compare(req.command, quitCommand) == 0 {
-			parser.netBuf.Write(protoOK)
+			conn.Write(protoOK)
 			return
 		}
 
@@ -233,7 +221,7 @@ func (srv *Server) serveClient(netConn net.Conn) {
 					log.Printf("Error sending request to redis client, exiting")
 					return
 				}
-				parser.netBuf.Write(fastResponse)
+				conn.Write(fastResponse)
 				continue
 			}
 		}
@@ -244,14 +232,12 @@ func (srv *Server) serveClient(netConn net.Conn) {
 		ok := sendRequest(client.requestChan, &req)
 		if !ok {
 			log.Printf("Error sending request to redis client, exiting")
-			parser.netBuf.Write(protoKO)
+			conn.Write(protoKO)
 			return
 		}
 		response := <-responseCh
-		parser.netBuf.Write(response)
+		conn.Write(response)
 	}
-	// lib.Debugf("Finished session %s", time.Since(started))
-	return
 }
 
 func sendRequest(c chan *Request, r *Request) (ok bool) {
@@ -264,6 +250,7 @@ func sendRequest(c chan *Request, r *Request) (ok bool) {
 	}()
 
 	if c == nil {
+		log.Println("Nil channel")
 		return false
 	}
 

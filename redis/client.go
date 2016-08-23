@@ -3,6 +3,7 @@ package redis
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -14,8 +15,9 @@ import (
 // Client is the thread that connect to the remote redis server
 type Client struct {
 	sync.Mutex
-	server             *Server
-	parser             *Parser
+	server *Server
+	conn   *lib.Netbuf
+	//	parser             *Parser
 	requestChan        chan *Request // The relayer sends the requests via this channel
 	database           int           // The current selected database
 	queueChan          chan *Request // Requests sent to the Redis server, some pending of responses
@@ -41,7 +43,7 @@ func (clt *Client) checkIdle() {
 
 	for {
 		clt.Lock()
-		parser := clt.parser
+		conn := clt.conn
 		channel := clt.requestChan
 		clt.Unlock()
 
@@ -49,7 +51,7 @@ func (clt *Client) checkIdle() {
 			return
 		}
 
-		if parser != nil && parser.isStale(connectionIdleMax) {
+		if conn != nil && conn.IsStale(connectionIdleMax) {
 			sendAsyncRequest(channel, &protoClientCloseConnection)
 		}
 		time.Sleep(connectionIdleMax)
@@ -68,14 +70,14 @@ func (clt *Client) connect() bool {
 	conn, err := net.DialTimeout(clt.server.Config().Scheme(), clt.server.Config().Host(), connectTimeout)
 	if err != nil {
 		log.Println("Failed to connect to", clt.server.Config().Host())
-		clt.parser = nil
+		clt.conn = nil
 		clt.lastConnectFailure = time.Now()
 		return false
 	}
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
-	clt.parser = newParser(conn, serverReadTimeout, writeTimeout)
+	clt.conn = lib.NewNetbuf(conn, serverReadTimeout, writeTimeout)
 	clt.createQueueChannel()
-	go clt.netListener()
+	go clt.netListener(clt.conn, clt.queueChan)
 	return true
 }
 
@@ -104,12 +106,6 @@ func (clt *Client) listen() {
 			continue
 		}
 
-		if !*request.active && request.responseChannel != nil {
-			// The client has disconnected from the relayer but expect and answer, ignore it
-			lib.Debugf("Client has disconnected from the relayer")
-			continue
-
-		}
 		_, err := clt.write(request)
 		if err != nil {
 			log.Println("Error writing:", err)
@@ -122,31 +118,30 @@ func (clt *Client) listen() {
 }
 
 // This goroutine listens for incoming answers from the Redis server
-func (clt *Client) netListener() {
-	clt.Lock()
-	sent := clt.queueChan
-	conn := clt.parser
-	clt.Unlock()
-
-	if conn == nil || sent == nil {
+func (clt *Client) netListener(conn *lib.Netbuf, queue chan *Request) {
+	if conn == nil || queue == nil {
 		log.Println("Net listener not starting, nil values")
 		return
 	}
+
+	parser := newParser(conn)
 	for {
-		if conn != clt.parser || sent != clt.queueChan {
+		if conn != clt.conn {
 			log.Println("Net listener exiting, connection has changed")
 			return
 		}
-		req, more := <-sent
+		req, more := <-queue
 		if !more || req == nil {
 			lib.Debugf("Net listener exiting")
 			return
 		}
 
 		resp := &Request{}
-		_, err := conn.read(resp, false)
+		_, err := parser.read(resp, false)
 		if err != nil {
-			log.Println("Error in listener", err)
+			if err != io.EOF {
+				log.Printf("Error with server %s connection: %s", clt.server.Config().Host(), err)
+			}
 			clt.close()
 			return
 		}
@@ -170,7 +165,7 @@ func (clt *Client) purgeRequests() {
 }
 
 func (clt *Client) write(r *Request) (int64, error) {
-	if clt.parser == nil && !clt.connect() {
+	if clt.conn == nil && !clt.connect() {
 		return 0, fmt.Errorf("Connection failed")
 	}
 
@@ -184,7 +179,6 @@ func (clt *Client) write(r *Request) (int64, error) {
 			databaseChanger := Request{
 				command:  selectCommand,
 				buffer:   bytes.NewBuffer(getSelect(r.database)),
-				parser:   r.parser,
 				database: r.database,
 			}
 			_, err := clt.write(&databaseChanger)
@@ -195,7 +189,7 @@ func (clt *Client) write(r *Request) (int64, error) {
 			}
 		}
 	}
-	c, err := r.buffer.WriteTo(clt.parser.netBuf)
+	c, err := r.buffer.WriteTo(clt.conn)
 
 	if err != nil {
 		clt.close()
@@ -204,7 +198,6 @@ func (clt *Client) write(r *Request) (int64, error) {
 			return 0, err
 		}
 	}
-
 	r.buffer = nil // We don't need it anymore, don't use memory
 	clt.queueChan <- r
 	return c, err
@@ -219,11 +212,10 @@ func (clt *Client) close() {
 		close(clt.queueChan)
 		clt.queueChan = nil
 	}
-	conn := clt.parser
-	clt.parser = nil
-	if conn != nil {
+	if clt.conn != nil {
 		lib.Debugf("Closing connection")
-		conn.close()
+		clt.conn.Close()
+		clt.conn = nil
 		clt.database = 0
 	}
 }

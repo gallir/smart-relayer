@@ -3,7 +3,6 @@ package redis
 import (
 	"bytes"
 	"fmt"
-	"net"
 	"strconv"
 	"time"
 
@@ -12,7 +11,7 @@ import (
 
 // RedisIO keeps the status of the connection to a server
 type Parser struct {
-	netBuf   *lib.Netbuf
+	readBuf  *lib.Netbuf
 	database int
 }
 
@@ -20,28 +19,19 @@ const (
 	maxBufCount = 1000 // To protect for very large buffer consuming lot of memory
 )
 
-func newParser(netConn net.Conn, readTimeout, writeTimeout time.Duration) *Parser {
+func newParser(r *lib.Netbuf) *Parser {
 	p := &Parser{
-		netBuf: lib.NewNetbuf(netConn, readTimeout, writeTimeout),
+		readBuf: r,
 	}
 	return p
 }
 
 func (p *Parser) isStale(timeout time.Duration) bool {
-	return p.netBuf.IsStale(timeout)
-}
-
-// Write is exported to comply with io.Writer interface
-func (p *Parser) Write(b []byte) (int, error) {
-	return p.netBuf.Write(b)
-}
-
-func (p *Parser) close() error {
-	return p.netBuf.Close()
+	return p.readBuf.IsStale(timeout)
 }
 
 func (p *Parser) read(r *Request, parseCommand bool) ([]byte, error) {
-	line, err := p.netBuf.ReadLine()
+	line, err := p.readBuf.ReadLine()
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +55,7 @@ func (p *Parser) read(r *Request, parseCommand bool) ([]byte, error) {
 		}
 		r.buffer.Write(line)
 		if n > 0 {
-			b, err := p.netBuf.ReadN(n + 2)
+			b, err := p.readBuf.ReadN(n + 2)
 			if err != nil {
 				return nil, err
 			}
