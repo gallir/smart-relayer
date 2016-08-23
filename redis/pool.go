@@ -129,7 +129,7 @@ func (p *pool) close(e *elem) {
 			p.lastIdle.Before(timeLimit) {
 			p.idle = append(p.idle, e)
 			p.lastIdle = now
-			// lib.Debugf("Pool: added to idle %d counter %d", e.id, e.counter)
+			lib.Debugf("Pool: added to idle %d counter %d", e.id, e.counter)
 		} else {
 			// lib.Debugf("Pool: added to free %d counter %d", e.id, e.counter)
 			p.free = append(p.free, e)

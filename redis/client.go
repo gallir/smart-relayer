@@ -88,11 +88,13 @@ func (clt *Client) listen() {
 	defer log.Println("Finished Redis client")
 	go clt.checkIdle()
 
+	clt.Lock()
+	requestChan := clt.requestChan
+	clt.Unlock()
+
 	for {
-		request, more := <-clt.requestChan
+		request, more := <-requestChan
 		if !more { // exit from the program because the channel was closed
-			clt.purgeRequests()
-			clt.requestChan = nil
 			clt.close()
 			return
 		}
@@ -102,6 +104,12 @@ func (clt *Client) listen() {
 			continue
 		}
 
+		if !*request.active && request.responseChannel != nil {
+			// The client has disconnected from the relayer but expect and answer, ignore it
+			lib.Debugf("Client has disconnected from the relayer")
+			continue
+
+		}
 		_, err := clt.write(request)
 		if err != nil {
 			log.Println("Error writing:", err)
@@ -115,8 +123,11 @@ func (clt *Client) listen() {
 
 // This goroutine listens for incoming answers from the Redis server
 func (clt *Client) netListener() {
+	clt.Lock()
 	sent := clt.queueChan
 	conn := clt.parser
+	clt.Unlock()
+
 	if conn == nil || sent == nil {
 		log.Println("Net listener not starting, nil values")
 		return
@@ -128,7 +139,6 @@ func (clt *Client) netListener() {
 		}
 		req, more := <-sent
 		if !more || req == nil {
-			clt.purgeRequests()
 			lib.Debugf("Net listener exiting")
 			return
 		}
@@ -137,7 +147,6 @@ func (clt *Client) netListener() {
 		_, err := conn.read(resp, false)
 		if err != nil {
 			log.Println("Error in listener", err)
-			clt.purgeRequests()
 			clt.close()
 			return
 		}
@@ -146,9 +155,6 @@ func (clt *Client) netListener() {
 }
 
 func (clt *Client) purgeRequests() {
-	clt.Lock()
-	defer clt.Unlock()
-
 	if clt.queueChan == nil {
 		return
 	}
@@ -209,6 +215,7 @@ func (clt *Client) close() {
 	defer clt.Unlock()
 
 	if clt.queueChan != nil {
+		clt.purgeRequests()
 		close(clt.queueChan)
 		clt.queueChan = nil
 	}
@@ -227,5 +234,6 @@ func (clt *Client) exit() {
 
 	if clt.requestChan != nil {
 		close(clt.requestChan)
+		clt.requestChan = nil
 	}
 }

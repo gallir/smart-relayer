@@ -19,6 +19,7 @@ type Request struct {
 	buffer          *bytes.Buffer
 	responseChannel chan []byte // Channel to send the response to the original client
 	database        int         // The current database at the time the request was issued
+	active          *bool       // Indicates that the client is still connected to the relayer
 }
 
 // Server is the thread that listen for clients' connections
@@ -200,8 +201,13 @@ func (srv *Server) serveClient(netConn net.Conn) {
 	responseCh := make(chan []byte, 1)
 	defer close(responseCh)
 
+	active := true
+	defer func() {
+		active = false
+	}()
+
 	for {
-		req := Request{parser: parser}
+		req := Request{parser: parser, active: &active}
 		_, err := parser.read(&req, true)
 		if err != nil {
 			return
