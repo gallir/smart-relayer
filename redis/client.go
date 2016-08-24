@@ -21,7 +21,6 @@ type Client struct {
 	requestChan        chan *Request // The relayer sends the requests via this channel
 	database           int           // The current selected database
 	queueChan          chan *Request // Requests sent to the Redis server, some pending of responses
-	idleDone           chan bool
 	lastConnectFailure time.Time
 	connectedAt        time.Time
 }
@@ -39,27 +38,11 @@ func newClient(s *Server) *Client {
 	return clt
 }
 
-func (clt *Client) checkIdle(conn *lib.Netbuf, ch chan *Request, done chan bool) {
-	lib.Debugf("checkIdle started")
-	defer lib.Debugf("checkIdle exiting")
-
-	for {
-		select {
-		case <-time.After(connectionIdleMax):
-			if conn.IsStale(connectionIdleMax) {
-				sendAsyncRequest(ch, &protoClientCloseConnection)
-			}
-		case <-done:
-			return
-		}
-	}
-}
-
 func (clt *Client) connect() bool {
 	clt.Lock()
 	defer clt.Unlock()
 
-	if clt.lastConnectFailure.After(time.Now().Add(-1 * time.Second)) {
+	if clt.lastConnectFailure.After(time.Now().Add(100 * time.Millisecond)) {
 		// It failed too recently
 		return false
 	}
@@ -78,8 +61,6 @@ func (clt *Client) connect() bool {
 
 	// Start connection goroutines
 	go clt.netListener(clt.conn, clt.queueChan)
-	clt.idleDone = make(chan bool)
-	go clt.checkIdle(clt.conn, clt.requestChan, clt.idleDone)
 
 	return true
 }
@@ -97,23 +78,26 @@ func (clt *Client) listen() {
 	clt.Unlock()
 
 	for {
-		request, more := <-requestChan
-		if !more { // exit from the program because the channel was closed
-			clt.close()
-			return
-		}
-		if bytes.Compare(request.command, closeConnectionCommand) == 0 {
-			lib.Debugf("Closing by idle %s", clt.server.Config().Host())
-			clt.close()
+		select {
+		case request, more := <-requestChan:
+			if !more { // exit from the program because the channel was closed
+				clt.disconnect()
+				return
+			}
+			_, err := clt.write(request)
+			if err != nil {
+				log.Println("Error writing:", err)
+				sendAsyncResponse(request.responseChannel, protoKO)
+				clt.disconnect()
+				continue
+			}
+		case <-time.After(maxIdle):
+			if clt.conn != nil {
+				lib.Debugf("Closing by idle %s", clt.server.Config().Host())
+				clt.disconnect()
+			}
 			continue
-		}
 
-		_, err := clt.write(request)
-		if err != nil {
-			log.Println("Error writing:", err)
-			sendAsyncResponse(request.responseChannel, protoKO)
-			clt.close()
-			continue
 		}
 	}
 
@@ -144,7 +128,7 @@ func (clt *Client) netListener(conn *lib.Netbuf, queue chan *Request) {
 			if err != io.EOF {
 				log.Printf("Error with server %s connection: %s", clt.server.Config().Host(), err)
 			}
-			clt.close()
+			clt.disconnect()
 			return
 		}
 		sendAsyncResponse(req.responseChannel, resp.buffer.Bytes())
@@ -152,10 +136,6 @@ func (clt *Client) netListener(conn *lib.Netbuf, queue chan *Request) {
 }
 
 func (clt *Client) purgeRequests() {
-	if clt.queueChan == nil {
-		return
-	}
-
 	for {
 		select {
 		case req := <-clt.queueChan:
@@ -186,7 +166,7 @@ func (clt *Client) write(r *Request) (int64, error) {
 			_, err := clt.write(&databaseChanger)
 			if err != nil {
 				log.Println("Error changing database", err)
-				clt.close()
+				clt.disconnect()
 				return 0, fmt.Errorf("Error in select")
 			}
 		}
@@ -194,7 +174,7 @@ func (clt *Client) write(r *Request) (int64, error) {
 	c, err := r.buffer.WriteTo(clt.conn)
 
 	if err != nil {
-		clt.close()
+		clt.disconnect()
 		if neterr, ok := err.(net.Error); !ok || !neterr.Timeout() {
 			log.Println("Failed in write:", err)
 			return 0, err
@@ -205,14 +185,9 @@ func (clt *Client) write(r *Request) (int64, error) {
 	return c, err
 }
 
-func (clt *Client) close() {
+func (clt *Client) disconnect() {
 	clt.Lock()
 	defer clt.Unlock()
-
-	if clt.idleDone != nil {
-		clt.idleDone <- true
-		clt.idleDone = nil
-	}
 
 	if clt.queueChan != nil {
 		clt.purgeRequests()
@@ -224,8 +199,9 @@ func (clt *Client) close() {
 		lib.Debugf("Closing connection, last activity: %s", time.Since(clt.conn.LastActivity()))
 		clt.conn.Close()
 		clt.conn = nil
-		clt.database = 0
 	}
+
+	clt.database = 0
 }
 
 func (clt *Client) exit() {

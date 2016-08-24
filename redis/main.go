@@ -33,14 +33,14 @@ const (
 	connectionRetries = 3
 	pipelineCommands  = 1000
 	requestBufferSize = 8192
-	connectionIdleMax = 5 * time.Second
 	modeSync          = 0
 	modeSmart         = 1
 	connectTimeout    = 5 * time.Second
-	localReadTimeout  = 600 * time.Second
-	responseTimeout   = 60 * time.Second
 	serverReadTimeout = 5 * time.Second
 	writeTimeout      = 5 * time.Second
+	maxIdle           = 10 * time.Second
+	responseTimeout   = 20 * time.Second
+	localReadTimeout  = 600 * time.Second
 )
 
 var (
