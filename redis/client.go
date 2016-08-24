@@ -16,6 +16,7 @@ import (
 type Client struct {
 	sync.Mutex
 	server *Server
+	ready  bool
 	conn   *lib.Netbuf
 	//	parser             *Parser
 	requestChan        chan *Request // The relayer sends the requests via this channel
@@ -32,8 +33,9 @@ func newClient(s *Server) *Client {
 	}
 
 	clt.requestChan = make(chan *Request, requestBufferSize)
+	clt.ready = true
+	go clt.listen(clt.requestChan)
 	lib.Debugf("Client %s for target %s ready", clt.server.Config().Listen, clt.server.Config().Host())
-	go clt.listen()
 
 	return clt
 }
@@ -57,47 +59,39 @@ func (clt *Client) connect() bool {
 	clt.connectedAt = time.Now()
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
 	clt.conn = lib.NewNetbuf(conn, serverReadTimeout, writeTimeout)
-	clt.createQueueChannel()
+	clt.queueChan = make(chan *Request, requestBufferSize)
 
-	// Start connection goroutines
 	go clt.netListener(clt.conn, clt.queueChan)
 
 	return true
 }
 
-func (clt *Client) createQueueChannel() {
-	clt.queueChan = make(chan *Request, requestBufferSize)
-}
-
 // Listen for clients' messages from the requestChan
-func (clt *Client) listen() {
+func (clt *Client) listen(ch chan *Request) {
 	defer log.Println("Finished Redis client")
-
-	clt.Lock()
-	requestChan := clt.requestChan
-	clt.Unlock()
+	defer func() {
+		clt.disconnect()
+		clt.ready = false
+	}()
 
 	for {
 		select {
-		case request, more := <-requestChan:
+		case req, more := <-ch:
 			if !more { // exit from the program because the channel was closed
 				clt.disconnect()
 				return
 			}
-			_, err := clt.write(request)
+			_, err := clt.write(req)
 			if err != nil {
 				log.Println("Error writing:", err)
-				sendAsyncResponse(request.responseChannel, protoKO)
+				sendAsyncResponse(req.responseChannel, protoKO)
 				clt.disconnect()
-				continue
 			}
 		case <-time.After(maxIdle):
 			if clt.conn != nil {
 				lib.Debugf("Closing by idle %s", clt.server.Config().Host())
 				clt.disconnect()
 			}
-			continue
-
 		}
 	}
 
@@ -105,17 +99,8 @@ func (clt *Client) listen() {
 
 // This goroutine listens for incoming answers from the Redis server
 func (clt *Client) netListener(conn *lib.Netbuf, queue chan *Request) {
-	if conn == nil || queue == nil {
-		log.Println("Net listener not starting, nil values")
-		return
-	}
-
 	parser := newParser(conn)
 	for {
-		if conn != clt.conn {
-			log.Println("Net listener exiting, connection has changed")
-			return
-		}
 		req, more := <-queue
 		if !more || req == nil {
 			lib.Debugf("Net listener exiting")
@@ -174,12 +159,10 @@ func (clt *Client) write(r *Request) (int64, error) {
 	c, err := r.buffer.WriteTo(clt.conn)
 
 	if err != nil {
+		lib.Debugf("Failed in write: %s", err)
 		clt.disconnect()
-		if neterr, ok := err.(net.Error); !ok || !neterr.Timeout() {
-			log.Println("Failed in write:", err)
-			return 0, err
-		}
 	}
+
 	r.buffer = nil // We don't need it anymore, don't use memory
 	clt.queueChan <- r
 	return c, err
@@ -196,7 +179,7 @@ func (clt *Client) disconnect() {
 	}
 
 	if clt.conn != nil {
-		lib.Debugf("Closing connection, last activity: %s", time.Since(clt.conn.LastActivity()))
+		lib.Debugf("Closing connection")
 		clt.conn.Close()
 		clt.conn = nil
 	}
@@ -208,8 +191,16 @@ func (clt *Client) exit() {
 	clt.Lock()
 	defer clt.Unlock()
 
+	clt.ready = false
 	if clt.requestChan != nil {
 		close(clt.requestChan)
 		clt.requestChan = nil
 	}
+}
+
+func (clt *Client) isValid() bool {
+	clt.Lock()
+	defer clt.Unlock()
+
+	return clt.ready
 }

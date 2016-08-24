@@ -23,16 +23,17 @@ type Request struct {
 // Server is the thread that listen for clients' connections
 type Server struct {
 	sync.Mutex
-	config lib.RelayerConfig
-	pool   *pool
-	mode   int
-	done   chan bool
+	config   lib.RelayerConfig
+	pool     *pool
+	mode     int
+	done     chan bool
+	listener net.Listener
 }
 
 const (
 	connectionRetries = 3
 	pipelineCommands  = 1000
-	requestBufferSize = 8192
+	requestBufferSize = 1024
 	modeSync          = 0
 	modeSmart         = 1
 	connectTimeout    = 5 * time.Second
@@ -107,7 +108,7 @@ func (srv *Server) Listen() string {
 }
 
 // Start accepts incoming connections on the Listener l
-func (srv *Server) Start() error {
+func (srv *Server) Start() (e error) {
 	srv.Lock()
 	defer srv.Unlock()
 
@@ -119,7 +120,7 @@ func (srv *Server) Start() error {
 		if s, err := os.Stat(addr); err == nil {
 			if (s.Mode() & os.ModeSocket) > 0 {
 				// Remove existing socket
-				log.Println("Warning, removing existing socket", addr)
+				// log.Println("Warning, removing existing socket", addr)
 				os.Remove(addr)
 			} else {
 				log.Println("socket", addr, s.Mode(), os.ModeSocket)
@@ -128,27 +129,29 @@ func (srv *Server) Start() error {
 		}
 	}
 
-	l, e := net.Listen(connType, addr)
-	if connType == "unix" {
-		// Make sure is accesible for everyone
-		os.Chmod(addr, 0777)
-	}
+	srv.listener, e = net.Listen(connType, addr)
 	if e != nil {
 		log.Println("Error listening to", addr, e)
 		return e
+	}
+
+	if connType == "unix" {
+		// Make sure is accesible for everyone
+		os.Chmod(addr, 0777)
 	}
 
 	log.Printf("Starting redis server at %s for target %s", addr, srv.config.Host())
 	// Serve a client
 	go func() {
 		defer func() {
-			l.Close()
+			srv.listener.Close()
 			srv.done <- true
 		}()
 
 		for {
-			netConn, err := l.Accept()
-			if err != nil {
+			netConn, e := srv.listener.Accept()
+			if e != nil {
+				log.Println("Exiting", addr)
 				return
 			}
 			go srv.serveClient(netConn)
@@ -184,6 +187,10 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 
 func (srv *Server) Config() *lib.RelayerConfig {
 	return &srv.config
+}
+
+func (srv *Server) Exit() {
+	srv.listener.Close()
 }
 
 func (srv *Server) serveClient(netConn net.Conn) {

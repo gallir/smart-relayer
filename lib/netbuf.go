@@ -15,7 +15,6 @@ type Netbuf struct {
 	readTimeout  time.Duration
 	writeTimeout time.Duration
 	bufCount     int
-	usedAt       time.Time
 }
 
 const (
@@ -27,7 +26,6 @@ var noDeadline = time.Time{}
 func NewNetbuf(conn net.Conn, readTimeout, writeTimeout time.Duration) *Netbuf {
 	nb := &Netbuf{
 		conn:         conn,
-		usedAt:       time.Now(),
 		readTimeout:  readTimeout, // We use different read timeouts for the server and local client
 		writeTimeout: writeTimeout,
 	}
@@ -35,19 +33,10 @@ func NewNetbuf(conn net.Conn, readTimeout, writeTimeout time.Duration) *Netbuf {
 	return nb
 }
 
-func (nb *Netbuf) IsStale(timeout time.Duration) bool {
-	return timeout > 0 && time.Since(nb.usedAt) > timeout
-}
-
-func (nb *Netbuf) LastActivity() time.Time {
-	return nb.usedAt
-}
-
 // Read complies with io.Reader interface
 func (nb *Netbuf) Read(b []byte) (int, error) {
-	nb.usedAt = time.Now()
 	if nb.readTimeout != 0 {
-		nb.conn.SetReadDeadline(nb.usedAt.Add(nb.readTimeout))
+		nb.conn.SetReadDeadline(time.Now().Add(nb.readTimeout))
 	} else {
 		nb.conn.SetReadDeadline(noDeadline)
 	}
@@ -56,9 +45,8 @@ func (nb *Netbuf) Read(b []byte) (int, error) {
 
 // Write complies with io.Writer interface
 func (nb *Netbuf) Write(b []byte) (n int, e error) {
-	nb.usedAt = time.Now()
 	if nb.writeTimeout != 0 {
-		nb.conn.SetWriteDeadline(nb.usedAt.Add(nb.writeTimeout))
+		nb.conn.SetWriteDeadline(time.Now().Add(nb.writeTimeout))
 	} else {
 		nb.conn.SetWriteDeadline(noDeadline)
 	}

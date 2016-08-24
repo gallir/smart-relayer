@@ -11,11 +11,12 @@ import (
 )
 
 var (
-	relayers        = make(map[string]lib.Relayer)
-	relayersCreated = 0
-	relayersConfig  *lib.Config
-	done            = make(chan bool)
-	sigs            = make(chan os.Signal, 1)
+	relayers       = make(map[string]lib.Relayer)
+	totalRelayers  = 0
+	relayersConfig *lib.Config
+	done           = make(chan bool)
+	reloadSig      = make(chan os.Signal, 1)
+	exitSig        = make(chan os.Signal, 1)
 )
 
 func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
@@ -28,49 +29,74 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 
 func startOrReload() bool {
 	// Check config is OK
-	conf, err := lib.ReadConfig(lib.GlobalConfig.ConfigFileName)
+	newConf, err := lib.ReadConfig(lib.GlobalConfig.ConfigFileName)
 	if err != nil {
 		log.Println("Bad configuration", err)
 		return false
 	}
-	relayersConfig = conf
 
-	for _, conf := range relayersConfig.Relayer {
-		srv, ok := relayers[conf.Listen]
+	newEndpoints := make(map[string]bool)
+
+	for _, conf := range newConf.Relayer {
+		endpoint, ok := relayers[conf.Listen]
+		newEndpoints[conf.Listen] = true
 		if !ok {
 			// Start a new relayer
-			newServer, err := getNewServer(conf)
+			r, err := getNewServer(conf)
 			if err == nil {
-				lib.Debugf("Starting new relayer from %s to %s", newServer.Listen(), conf.Url)
-				relayersCreated++
-				if e := newServer.Start(); e == nil {
-					relayers[newServer.Listen()] = newServer
+				lib.Debugf("Starting new relayer from %s to %s", r.Listen(), conf.Url)
+				totalRelayers++
+				if e := r.Start(); e == nil {
+					relayers[r.Listen()] = r
 				}
 			}
 		} else {
 			// The relayer exists, reload it
-			srv.Reload(&conf)
+			endpoint.Reload(&conf)
 		}
 	}
+
+	for endpoint, r := range relayers {
+		_, ok := newEndpoints[endpoint]
+		if !ok {
+			log.Printf("Deleting old endpoint %s", endpoint)
+			delete(relayers, endpoint)
+			r.Exit()
+		}
+	}
+
 	return true
 }
 
 func main() {
-	if startOrReload() {
-
-		// Listen for reload signals
-		signal.Notify(sigs, syscall.SIGHUP, syscall.SIGUSR1)
-		go func() {
-			for {
-				_ = <-sigs
-				startOrReload()
-			}
-		}()
-
-		for i := 0; i < relayersCreated; i++ {
-			<-done
-		}
-		os.Exit(0)
+	if !startOrReload() {
+		os.Exit(1)
 	}
-	os.Exit(1)
+
+	// Listen for reload signals
+	signal.Notify(reloadSig, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
+	signal.Notify(exitSig, syscall.SIGINT, syscall.SIGKILL, os.Interrupt, syscall.SIGTERM)
+
+	// Reload config
+	go func() {
+		for {
+			_ = <-reloadSig
+			startOrReload()
+		}
+	}()
+
+	// Exit
+	go func() {
+		for {
+			_ = <-exitSig
+			for _, r := range relayers {
+				r.Exit()
+			}
+		}
+	}()
+
+	for i := 0; i < totalRelayers; i++ {
+		<-done
+	}
+	os.Exit(0)
 }

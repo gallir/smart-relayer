@@ -9,6 +9,7 @@ type Relayer interface {
 	Protocol() string
 	Listen() string
 	Config() *RelayerConfig
+	Exit()
 }
 
 type MainConfig struct {

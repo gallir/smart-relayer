@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/gallir/smart-relayer/lib"
 )
@@ -24,10 +23,6 @@ func newParser(r *lib.Netbuf) *Parser {
 		readBuf: r,
 	}
 	return p
-}
-
-func (p *Parser) isStale(timeout time.Duration) bool {
-	return p.readBuf.IsStale(timeout)
 }
 
 func (p *Parser) read(r *Request, parseCommand bool) ([]byte, error) {

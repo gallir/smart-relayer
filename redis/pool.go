@@ -76,6 +76,22 @@ func (p *pool) get() (e *elem, ok bool) {
 	p.Lock()
 	defer p.Unlock()
 
+	e, ok = p._get()
+	if ok {
+		// Check the element is ok
+		if !e.client.isValid() {
+			// Replace it
+			i := e.id
+			log.Printf("Error in client %d, replacing it", i)
+			e = p._createElem(e.id)
+			e.counter++
+			p.clients[i] = e
+		}
+	}
+	return
+}
+
+func (p *pool) _get() (e *elem, ok bool) {
 	e, ok = p._pickFree()
 	if ok {
 		return
@@ -87,8 +103,8 @@ func (p *pool) get() (e *elem, ok bool) {
 		return
 	}
 
-	if len(p.clients) < p.max {
-		e = p._createElem()
+	if l := len(p.clients); l < p.max {
+		e = p._createElem(l)
 		e.counter++
 		return e, true
 	}
@@ -109,7 +125,6 @@ func (p *pool) close(e *elem) {
 	if e.id >= len(p.clients) {
 		lib.Debugf("Pool: exceeded limit, %d counter %d", e.id, e.counter)
 		if e.counter <= 0 && e.client != nil {
-			lib.Debugf("Pool: for exit of the client")
 			e.client.exit()
 		}
 		return
@@ -137,10 +152,10 @@ func (p *pool) close(e *elem) {
 	}
 }
 
-func (p *pool) _createElem() (e *elem) {
+func (p *pool) _createElem(id int) (e *elem) {
 	cl := newClient(p.server)
 	e = &elem{
-		id:     len(p.clients),
+		id:     id,
 		client: cl,
 	}
 	p.clients = append(p.clients, e)
