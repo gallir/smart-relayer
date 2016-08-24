@@ -11,7 +11,6 @@ import (
 type Netbuf struct {
 	conn         net.Conn
 	readBuf      *bufio.Reader
-	writeBuf     *bufio.Writer
 	internalBuf  []byte
 	readTimeout  time.Duration
 	writeTimeout time.Duration
@@ -33,7 +32,6 @@ func NewNetbuf(conn net.Conn, readTimeout, writeTimeout time.Duration) *Netbuf {
 		writeTimeout: writeTimeout,
 	}
 	nb.readBuf = bufio.NewReader(conn)
-	nb.writeBuf = bufio.NewWriter(conn)
 	return nb
 }
 
@@ -60,17 +58,12 @@ func (nb *Netbuf) Write(b []byte) (n int, e error) {
 	} else {
 		nb.conn.SetWriteDeadline(noDeadline)
 	}
-	n, e = nb.writeBuf.Write(b)
+	n, e = nb.conn.Write(b)
 
 	if e != nil {
 		Debugf("Netbuf, error in write %s", e)
 	}
-	nb.Flush()
 	return
-}
-
-func (nb *Netbuf) Flush() error {
-	return nb.writeBuf.Flush()
 }
 
 func (nb *Netbuf) RemoteAddr() net.Addr {

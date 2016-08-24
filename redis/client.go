@@ -21,6 +21,7 @@ type Client struct {
 	requestChan        chan *Request // The relayer sends the requests via this channel
 	database           int           // The current selected database
 	queueChan          chan *Request // Requests sent to the Redis server, some pending of responses
+	idleDone           chan bool
 	lastConnectFailure time.Time
 }
 
@@ -37,24 +38,19 @@ func newClient(s *Server) *Client {
 	return clt
 }
 
-func (clt *Client) checkIdle() {
+func (clt *Client) checkIdle(conn *lib.Netbuf, ch chan *Request, done chan bool) {
 	lib.Debugf("checkIdle started")
 	defer lib.Debugf("checkIdle exiting")
 
 	for {
-		clt.Lock()
-		conn := clt.conn
-		ch := clt.requestChan
-		clt.Unlock()
-
-		if ch == nil || conn == nil {
+		select {
+		case <-time.After(connectionIdleMax):
+			if conn.IsStale(connectionIdleMax) {
+				sendAsyncRequest(ch, &protoClientCloseConnection)
+			}
+		case <-done:
 			return
 		}
-
-		if conn.IsStale(connectionIdleMax) {
-			sendAsyncRequest(ch, &protoClientCloseConnection)
-		}
-		time.Sleep(connectionIdleMax)
 	}
 }
 
@@ -77,7 +73,12 @@ func (clt *Client) connect() bool {
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
 	clt.conn = lib.NewNetbuf(conn, serverReadTimeout, writeTimeout)
 	clt.createQueueChannel()
+
+	// Start connection goroutines
 	go clt.netListener(clt.conn, clt.queueChan)
+	clt.idleDone = make(chan bool)
+	go clt.checkIdle(clt.conn, clt.requestChan, clt.idleDone)
+
 	return true
 }
 
@@ -88,7 +89,6 @@ func (clt *Client) createQueueChannel() {
 // Listen for clients' messages from the requestChan
 func (clt *Client) listen() {
 	defer log.Println("Finished Redis client")
-	go clt.checkIdle()
 
 	clt.Lock()
 	requestChan := clt.requestChan
@@ -206,6 +206,11 @@ func (clt *Client) write(r *Request) (int64, error) {
 func (clt *Client) close() {
 	clt.Lock()
 	defer clt.Unlock()
+
+	if clt.idleDone != nil {
+		clt.idleDone <- true
+		clt.idleDone = nil
+	}
 
 	if clt.queueChan != nil {
 		clt.purgeRequests()

@@ -19,13 +19,12 @@ for ($i = 0; $i<1000; $i++) {
         exit(1);
     }
 
-/*
+
     $response = phpiredis_command_bs($cli, array("GET", $key));
     if ($response != $value) {
         printf("Error in GET %s\n", $key);
         exit(1);
     } 
-*/
 
     $response = phpiredis_command_bs($cli, array("HSET", "ROW", $key, $value));
     if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
