@@ -39,6 +39,10 @@ func (nb *Netbuf) IsStale(timeout time.Duration) bool {
 	return timeout > 0 && time.Since(nb.usedAt) > timeout
 }
 
+func (nb *Netbuf) LastActivity() time.Time {
+	return nb.usedAt
+}
+
 // Read complies with io.Reader interface
 func (nb *Netbuf) Read(b []byte) (int, error) {
 	nb.usedAt = time.Now()

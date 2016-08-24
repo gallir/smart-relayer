@@ -23,6 +23,7 @@ type Client struct {
 	queueChan          chan *Request // Requests sent to the Redis server, some pending of responses
 	idleDone           chan bool
 	lastConnectFailure time.Time
+	connectedAt        time.Time
 }
 
 // NewClient creates a new client that connect to a Redis server
@@ -70,6 +71,7 @@ func (clt *Client) connect() bool {
 		clt.lastConnectFailure = time.Now()
 		return false
 	}
+	clt.connectedAt = time.Now()
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
 	clt.conn = lib.NewNetbuf(conn, serverReadTimeout, writeTimeout)
 	clt.createQueueChannel()
@@ -217,8 +219,9 @@ func (clt *Client) close() {
 		close(clt.queueChan)
 		clt.queueChan = nil
 	}
+
 	if clt.conn != nil {
-		lib.Debugf("Closing connection")
+		lib.Debugf("Closing connection, last activity: %s", time.Since(clt.conn.LastActivity()))
 		clt.conn.Close()
 		clt.conn = nil
 		clt.database = 0

@@ -38,6 +38,7 @@ const (
 	modeSmart         = 1
 	connectTimeout    = 5 * time.Second
 	localReadTimeout  = 600 * time.Second
+	responseTimeout   = 60 * time.Second
 	serverReadTimeout = 5 * time.Second
 	writeTimeout      = 5 * time.Second
 )
@@ -128,6 +129,10 @@ func (srv *Server) Start() error {
 	}
 
 	l, e := net.Listen(connType, addr)
+	if connType == "unix" {
+		// Make sure is accesible for everyone
+		os.Chmod(addr, 0777)
+	}
 	if e != nil {
 		log.Println("Error listening to", addr, e)
 		return e
@@ -235,8 +240,21 @@ func (srv *Server) serveClient(netConn net.Conn) {
 			conn.Write(protoKO)
 			return
 		}
-		response := <-responseCh
-		conn.Write(response)
+
+		select {
+		case response, more := <-responseCh:
+			if !more {
+				// The client has closed the channel
+				lib.Debugf("Redis client has closed channel, exiting")
+				return
+			}
+			conn.Write(response)
+		case <-time.After(responseTimeout):
+			// Something very wrong happened in the client
+			log.Println("Timeout waiting a response, closing client connection")
+			conn.Write(protoKO)
+			return
+		}
 	}
 }
 
