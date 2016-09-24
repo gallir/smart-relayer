@@ -70,22 +70,20 @@ func init() {
 	// These are the commands that can be sent in "background" when in smart mode
 	// The values are the immediate responses to the clients
 	commands = map[string][]byte{
-		"PING":   protoPong,
-		"SET":    protoOK,
-		"SETEX":  protoOK,
-		"PSETEX": protoOK,
-		"MSET":   protoOK,
-		"HMSET":  protoOK,
-
-		"SELECT": protoOK,
-
-		"DEL":       protoTrue,
+		"PING":      protoPong,
+		"SET":       protoOK,
+		"SETEX":     protoOK,
+		"PSETEX":    protoOK,
+		"MSET":      protoOK,
+		"HMSET":     protoOK,
+		"SELECT":    protoOK,
 		"HSET":      protoTrue,
-		"HDEL":      protoTrue,
 		"EXPIRE":    protoTrue,
 		"EXPIREAT":  protoTrue,
 		"PEXPIRE":   protoTrue,
 		"PEXPIREAT": protoTrue,
+		// "DEL":       protoTrue,  // Disabled until we add a throttling down option
+		// "HDEL":      protoTrue,  // because DEL by patern can be very expensive and kill the server
 	}
 }
 
