@@ -97,14 +97,6 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	return srv, nil
 }
 
-func (srv *Server) Protocol() string {
-	return "redis"
-}
-
-func (srv *Server) Listen() string {
-	return srv.config.Listen
-}
-
 // Start accepts incoming connections on the Listener l
 func (srv *Server) Start() (e error) {
 	srv.Lock()

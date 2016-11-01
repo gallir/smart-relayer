@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/rcluster"
 	"github.com/gallir/smart-relayer/redis"
 )
 
@@ -23,6 +24,8 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 	switch conf.Protocol {
 	case "redis":
 		srv, err = redis.New(conf, done)
+	case "redis-cluster":
+		srv, err = rcluster.New(conf, done)
 	}
 	return
 }
@@ -44,10 +47,10 @@ func startOrReload() bool {
 			// Start a new relayer
 			r, err := getNewServer(conf)
 			if err == nil {
-				lib.Debugf("Starting new relayer from %s to %s", r.Listen(), conf.Url)
+				lib.Debugf("Starting new relayer from %s to %s", conf.Listen, conf.Url)
 				totalRelayers++
 				if e := r.Start(); e == nil {
-					relayers[r.Listen()] = r
+					relayers[conf.Listen] = r
 				}
 			}
 		} else {

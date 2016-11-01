@@ -3,12 +3,8 @@ package lib
 import "flag"
 
 type Relayer interface {
-	//New(*RelayerConfig, chan bool) Relayer
 	Start() error
 	Reload(*RelayerConfig)
-	Protocol() string
-	Listen() string
-	Config() *RelayerConfig
 	Exit()
 }
 
