@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"strings"
+
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/mediocregopher/radix.v2/cluster"
 	"github.com/mediocregopher/radix.v2/redis"
@@ -36,7 +38,30 @@ const (
 // errors
 var (
 	errBadCmd = errors.New("ERR bad command")
+	commands  map[string][]byte
+
+	protoOK   = []byte("+OK\r\n")
+	protoTrue = []byte(":1\r\n")
+	protoKO   = []byte("-Error\r\n")
 )
+
+func init() {
+	// These are the commands that can be sent in "background" when in smart mode
+	// The values are the immediate responses to the clients
+	commands = map[string][]byte{
+		"SET":       protoOK,
+		"SETEX":     protoOK,
+		"PSETEX":    protoOK,
+		"MSET":      protoOK,
+		"HMSET":     protoOK,
+		"SELECT":    protoOK,
+		"HSET":      protoTrue,
+		"EXPIRE":    protoTrue,
+		"EXPIREAT":  protoTrue,
+		"PEXPIRE":   protoTrue,
+		"PEXPIREAT": protoTrue,
+	}
+}
 
 // New creates a new Redis local server
 func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
@@ -78,6 +103,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 				srv.cluster = nil
 				continue
 			}
+			lib.Debugf("Cluster linked to %s", addr)
 			return
 		}
 		log.Println("no available redis cluster nodes for ", srv.RedisAddrs)
@@ -145,6 +171,19 @@ func (srv *Server) Start() (e error) {
 func (srv *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
+	var asyncCh chan *redis.Resp
+
+	if srv.mode == modeSmart {
+		asyncCh = make(chan *redis.Resp, 64)
+		defer close(asyncCh)
+		go func() {
+			for m := range asyncCh {
+				srv.Cmd(m, nil)
+			}
+		}()
+
+	}
+
 	rr := redis.NewRespReader(conn)
 	for {
 		err := conn.SetReadDeadline(time.Now().Add(1 * time.Second))
@@ -160,12 +199,12 @@ func (srv *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		srv.Cmd(r).WriteTo(conn)
+		srv.Cmd(r, asyncCh).WriteTo(conn)
 	}
 
 }
 
-func (srv *Server) Cmd(m *redis.Resp) *redis.Resp {
+func (srv *Server) Cmd(m *redis.Resp, asyncCh chan *redis.Resp) *redis.Resp {
 	ms, err := m.Array()
 	if err != nil || len(ms) < 1 {
 		return redis.NewResp(errBadCmd)
@@ -174,6 +213,17 @@ func (srv *Server) Cmd(m *redis.Resp) *redis.Resp {
 	cmd, err := ms[0].Str()
 	if err != nil {
 		return redis.NewResp(errBadCmd)
+	}
+
+	doAsync := false
+	var fastResponse []byte
+	if asyncCh != nil {
+		fastResponse, doAsync = commands[strings.ToUpper(cmd)]
+	}
+
+	if doAsync {
+		asyncCh <- m
+		return redis.NewResp(fastResponse)
 	}
 
 	args := make([]interface{}, 0, len(ms[1:]))
