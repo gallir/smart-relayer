@@ -20,6 +20,8 @@ type RelayerConfig struct {
 	Url                string
 	MaxConnections     int
 	MaxIdleConnections int
+	Compress           bool
+	Uncompress         bool
 }
 
 func ReadConfig(filename string) (config *Config, err error) {

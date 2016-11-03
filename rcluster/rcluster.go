@@ -10,7 +10,10 @@ import (
 
 	"strings"
 
+	"bytes"
+
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/golang/snappy"
 	"github.com/mediocregopher/radix.v2/cluster"
 	"github.com/mediocregopher/radix.v2/redis"
 )
@@ -37,6 +40,8 @@ const (
 
 // errors
 var (
+	magicSnappy = []byte("$sy$")
+
 	errBadCmd = errors.New("ERR bad command")
 	commands  map[string][]byte
 
@@ -199,7 +204,15 @@ func (srv *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		srv.Cmd(r, asyncCh).WriteTo(conn)
+		if srv.config.Compress {
+			r = compress(r)
+		}
+
+		resp := srv.Cmd(r, asyncCh)
+		if srv.config.Compress || srv.config.Uncompress {
+			resp = uncompress(resp)
+		}
+		resp.WriteTo(conn)
 	}
 
 }
@@ -242,4 +255,91 @@ func (srv *Server) Exit() {
 	if srv.listener != nil {
 		srv.listener.Close()
 	}
+}
+
+func compress(m *redis.Resp) *redis.Resp {
+	ms, err := m.Array()
+	if err != nil || len(ms) < 1 {
+		return m
+	}
+
+	changed := false
+	items := make([]interface{}, 0, len(ms))
+	for _, item := range ms {
+		if item.IsType(redis.Str) {
+			b, e := item.Bytes()
+			if e != nil {
+				return m
+			}
+			if len(b) > 512 {
+				b = append(magicSnappy, snappy.Encode(nil, b)...)
+				changed = true
+			}
+			items = append(items, b)
+		}
+	}
+
+	if changed {
+		return redis.NewResp(items)
+	}
+	return m
+
+}
+
+func uncompress(m *redis.Resp) *redis.Resp {
+	if m.IsType(redis.Str) {
+		uncompressed, e := uncompressItem(m)
+		if e != nil {
+			log.Println(e)
+			return m
+		}
+		return redis.NewResp(uncompressed)
+	}
+
+	ms, err := m.Array()
+	if err != nil || len(ms) < 1 {
+		return m
+	}
+
+	changed := false
+	items := make([]interface{}, 0, len(ms))
+	for _, item := range ms {
+		b, e := uncompressItem(item)
+		if b == nil { // Fatal error
+			log.Println(e)
+			return m
+		}
+
+		if e != nil {
+			changed = true
+		}
+		items = append(items, b)
+	}
+
+	if changed {
+		return redis.NewResp(items)
+	}
+	return m
+
+}
+
+func uncompressItem(item *redis.Resp) ([]byte, error) {
+	if !item.IsType(redis.Str) {
+		return nil, errors.New("not a str")
+	}
+
+	b, e := item.Bytes()
+	if e != nil {
+		return nil, errors.New("couldn't read bytes")
+	}
+
+	if bytes.HasPrefix(b, magicSnappy) {
+		uncompressed, e := snappy.Decode(nil, b[len(magicSnappy):])
+		if e == nil {
+			b = uncompressed
+		} else {
+			return b, errors.New("error uncompressing")
+		}
+	}
+	return b, nil
 }
