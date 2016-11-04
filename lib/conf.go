@@ -2,7 +2,6 @@ package lib
 
 import (
 	"log"
-
 	"net/url"
 
 	"github.com/BurntSushi/toml"
@@ -17,7 +16,7 @@ type RelayerConfig struct {
 	Protocol           string
 	Mode               string
 	Listen             string
-	Url                string
+	URL                string
 	MaxConnections     int
 	MaxIdleConnections int
 	Compress           bool
@@ -34,7 +33,7 @@ func ReadConfig(filename string) (config *Config, err error) {
 }
 
 func (c *RelayerConfig) Scheme() (scheme string) {
-	u, err := url.Parse(c.Url)
+	u, err := url.Parse(c.URL)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -43,11 +42,10 @@ func (c *RelayerConfig) Scheme() (scheme string) {
 }
 
 func (c *RelayerConfig) Host() (host string) {
-	u, err := url.Parse(c.Url)
+	host, err := Host(c.URL)
 	if err != nil {
 		log.Fatal(err)
 	}
-	host = u.Host
 	return
 }
 
@@ -70,5 +68,11 @@ func (c *RelayerConfig) ListenHost() (host string) {
 	} else {
 		host = u.Host
 	}
+	return
+}
+
+func Host(s string) (host string, err error) {
+	u, err := url.Parse(s)
+	host = u.Host
 	return
 }

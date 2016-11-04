@@ -156,7 +156,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 	defer srv.Unlock()
 
 	reset := false
-	if srv.config.Url != "" && srv.config.Url != c.Url {
+	if srv.config.URL != "" && srv.config.URL != c.URL {
 		reset = true
 	}
 	srv.config = *c // Save a copy

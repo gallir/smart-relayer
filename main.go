@@ -47,7 +47,7 @@ func startOrReload() bool {
 			// Start a new relayer
 			r, err := getNewServer(conf)
 			if err == nil {
-				lib.Debugf("Starting new relayer from %s to %s", conf.Listen, conf.Url)
+				lib.Debugf("Starting new relayer from %s to %s", conf.Listen, conf.URL)
 				totalRelayers++
 				if e := r.Start(); e == nil {
 					relayers[conf.Listen] = r

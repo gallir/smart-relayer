@@ -36,6 +36,7 @@ const (
 	requestBufferSize = 1024
 	modeSync          = 0
 	modeSmart         = 1
+	minCompressSize   = 256
 )
 
 // errors
@@ -73,7 +74,7 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done: done,
 	}
-	srv.ListenAddr = c.Listen
+	//srv.ListenAddr = c.Listen
 	srv.RedisAddrs = append(srv.RedisAddrs, c.Host())
 
 	srv.Reload(&c)
@@ -90,7 +91,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 	defer srv.Unlock()
 
 	reset := false
-	if srv.config.Url != c.Url {
+	if srv.config.URL != c.URL {
 		reset = true
 	}
 	srv.config = *c // Save a copy
@@ -99,10 +100,16 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 	} else {
 		srv.mode = modeSync
 	}
+
 	if reset {
 		log.Printf("Reload and reset redis cluster server at port %s for target %s", srv.config.Listen, srv.config.Host())
-		var err error
-		for _, addr := range srv.RedisAddrs {
+
+		// Allows a list of URLs separated by spaces
+		for _, url := range strings.Split(srv.config.URL, " ") {
+			addr, err := lib.Host(url)
+			if err != nil {
+				continue
+			}
 			if srv.cluster, err = cluster.New(addr); err != nil {
 				log.Printf("Error in cluster %s: %s", addr, err)
 				srv.cluster = nil
@@ -112,8 +119,6 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 			return
 		}
 		log.Println("no available redis cluster nodes for ", srv.RedisAddrs)
-	} else {
-		log.Printf("Reload redis cluster config at port %s for target %s", srv.config.Listen, srv.config.Host())
 	}
 }
 
@@ -271,7 +276,7 @@ func compress(m *redis.Resp) *redis.Resp {
 			if e != nil {
 				return m
 			}
-			if len(b) > 512 {
+			if len(b) > minCompressSize {
 				b = append(magicSnappy, snappy.Encode(nil, b)...)
 				changed = true
 			}
