@@ -151,7 +151,7 @@ func (srv *Server) Start() (e error) {
 	return nil
 }
 
-func (srv *Server) Reload(c *lib.RelayerConfig) {
+func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	srv.Lock()
 	defer srv.Unlock()
 
@@ -173,6 +173,8 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 		log.Printf("Reload redis config at port %s for target %s", srv.config.Listen, srv.config.Host())
 		srv.pool.readConfig(c)
 	}
+
+	return nil
 }
 
 func (srv *Server) Config() *lib.RelayerConfig {

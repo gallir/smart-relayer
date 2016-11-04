@@ -4,7 +4,7 @@ import "flag"
 
 type Relayer interface {
 	Start() error
-	Reload(*RelayerConfig)
+	Reload(*RelayerConfig) error
 	Exit()
 }
 

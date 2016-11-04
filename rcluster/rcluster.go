@@ -1,33 +1,32 @@
 package rcluster
 
 import (
+	"bytes"
 	"errors"
 	"log"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
-
-	"strings"
-
-	"bytes"
 
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/golang/snappy"
 	"github.com/mediocregopher/radix.v2/cluster"
+	"github.com/mediocregopher/radix.v2/pool"
 	"github.com/mediocregopher/radix.v2/redis"
+	"github.com/mediocregopher/radix.v2/util"
 )
 
 // Server is the thread that listen for clients' connections
 type Server struct {
 	sync.Mutex
-	config     lib.RelayerConfig
-	mode       int
-	done       chan bool
-	ListenAddr string
-	RedisAddrs []string
-	listener   net.Listener
-	cluster    *cluster.Cluster
+	config   lib.RelayerConfig
+	mode     int
+	done     chan bool
+	listener net.Listener
+	cluster  *cluster.Cluster
+	pool     *pool.Pool
 }
 
 const (
@@ -37,6 +36,7 @@ const (
 	modeSync          = 0
 	modeSmart         = 1
 	minCompressSize   = 256
+	listenTimeout     = 15
 )
 
 // errors
@@ -44,49 +44,46 @@ var (
 	magicSnappy = []byte("$sy$")
 
 	errBadCmd = errors.New("ERR bad command")
-	commands  map[string][]byte
+	commands  map[string]*redis.Resp
 
-	protoOK   = []byte("+OK\r\n")
-	protoTrue = []byte(":1\r\n")
-	protoKO   = []byte("-Error\r\n")
+	respOK   = redis.NewResp([]byte("OK"))
+	respTrue = redis.NewResp(true)
 )
 
 func init() {
 	// These are the commands that can be sent in "background" when in smart mode
 	// The values are the immediate responses to the clients
-	commands = map[string][]byte{
-		"SET":       protoOK,
-		"SETEX":     protoOK,
-		"PSETEX":    protoOK,
-		"MSET":      protoOK,
-		"HMSET":     protoOK,
-		"SELECT":    protoOK,
-		"HSET":      protoTrue,
-		"EXPIRE":    protoTrue,
-		"EXPIREAT":  protoTrue,
-		"PEXPIRE":   protoTrue,
-		"PEXPIREAT": protoTrue,
+	commands = map[string]*redis.Resp{
+		"SET":       respOK,
+		"SETEX":     respOK,
+		"PSETEX":    respOK,
+		"MSET":      respOK,
+		"HMSET":     respOK,
+		"SELECT":    respOK,
+		"HSET":      respTrue,
+		"EXPIRE":    respTrue,
+		"EXPIREAT":  respTrue,
+		"PEXPIRE":   respTrue,
+		"PEXPIREAT": respTrue,
 	}
 }
 
-// New creates a new Redis local server
-func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
+// NewCluster creates a new Redis cluster client
+func NewCluster(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done: done,
 	}
-	//srv.ListenAddr = c.Listen
-	srv.RedisAddrs = append(srv.RedisAddrs, c.Host())
 
-	srv.Reload(&c)
-	if srv.cluster == nil {
-		log.Println("no available redis cluster nodes for ", srv.RedisAddrs)
-		return nil, errors.New("no available redis cluster nodes")
+	err := srv.Reload(&c)
+	if err != nil {
+		log.Println("no available redis cluster nodes", srv.config.URL)
+		return nil, err
 	}
 
 	return srv, nil
 }
 
-func (srv *Server) Reload(c *lib.RelayerConfig) {
+func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	srv.Lock()
 	defer srv.Unlock()
 
@@ -102,31 +99,20 @@ func (srv *Server) Reload(c *lib.RelayerConfig) {
 	}
 
 	if reset {
-		log.Printf("Reload and reset redis cluster server at port %s for target %s", srv.config.Listen, srv.config.Host())
-
-		// Allows a list of URLs separated by spaces
-		for _, url := range strings.Split(srv.config.URL, " ") {
-			addr, err := lib.Host(url)
-			if err != nil {
-				continue
-			}
-			if srv.cluster, err = cluster.New(addr); err != nil {
-				log.Printf("Error in cluster %s: %s", addr, err)
-				srv.cluster = nil
-				continue
-			}
-			lib.Debugf("Cluster linked to %s", addr)
-			return
+		if srv.config.Protocol == "redis-cluster" {
+			return srv.resetCluster()
 		}
-		log.Println("no available redis cluster nodes for ", srv.RedisAddrs)
+		return srv.resetPool()
 	}
+
+	return nil
 }
 
 func (srv *Server) Start() (e error) {
 	srv.Lock()
 	defer srv.Unlock()
 
-	if srv.cluster == nil {
+	if srv.cluster == nil && srv.pool == nil {
 		return
 	}
 
@@ -157,14 +143,9 @@ func (srv *Server) Start() (e error) {
 		os.Chmod(addr, 0777)
 	}
 
-	log.Printf("Starting redis cluster server at %s for target %s", addr, srv.config.Host())
+	log.Printf("Starting redis server at %s for target %s", addr, srv.config.Host())
 	// Serve a client
 	go func() {
-		defer func() {
-			srv.listener.Close()
-			srv.done <- true
-		}()
-
 		for {
 			netConn, e := srv.listener.Accept()
 			if e != nil {
@@ -178,8 +159,50 @@ func (srv *Server) Start() (e error) {
 	return nil
 }
 
+func (srv *Server) resetCluster() error {
+	log.Printf("Reload and reset redis cluster server at port %s for target %s", srv.config.Listen, srv.config.Host())
+
+	// Allows a list of URLs separated by spaces
+	for _, url := range strings.Split(srv.config.URL, " ") {
+		addr, err := lib.Host(url)
+		if err != nil {
+			continue
+		}
+		if srv.cluster, err = cluster.New(addr); err != nil {
+			log.Printf("Error in cluster %s: %s", addr, err)
+			srv.cluster = nil
+			continue
+		}
+		lib.Debugf("Cluster linked to %s", addr)
+		return nil
+	}
+	srv.cluster = nil
+	return errors.New("no available redis cluster nodes")
+}
+
+func (srv *Server) resetPool() error {
+	log.Printf("Reload and reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
+
+	var err error
+	srv.pool, err = pool.New("tcp", srv.config.Host(), srv.config.MaxConnections)
+	if err != nil {
+		srv.pool = nil
+		return errors.New("connection error")
+	}
+
+	lib.Debugf("Pool linked to %s", srv.config.Host())
+	return nil
+}
+
 func (srv *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
+
+	cl, e := srv.get()
+	if e != nil {
+		log.Println("error getting client", e)
+		return
+	}
+	defer srv.put(cl)
 
 	var asyncCh chan *redis.Resp
 
@@ -187,8 +210,15 @@ func (srv *Server) handleConnection(conn net.Conn) {
 		asyncCh = make(chan *redis.Resp, 64)
 		defer close(asyncCh)
 		go func() {
+			cl, e := srv.get()
+			if e != nil {
+				log.Println("error getting client for async", e)
+				return
+			}
+			defer srv.put(cl)
+
 			for m := range asyncCh {
-				srv.Cmd(m, nil)
+				cmd(cl, m, nil)
 			}
 		}()
 
@@ -196,7 +226,7 @@ func (srv *Server) handleConnection(conn net.Conn) {
 
 	rr := redis.NewRespReader(conn)
 	for {
-		err := conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		err := conn.SetReadDeadline(time.Now().Add(listenTimeout * time.Second))
 		if err != nil {
 			log.Printf("error setting read deadline: %s", err)
 			return
@@ -206,6 +236,7 @@ func (srv *Server) handleConnection(conn net.Conn) {
 		if redis.IsTimeout(r) {
 			continue
 		} else if r.IsType(redis.IOErr) {
+			lib.Debugf("IOErr")
 			return
 		}
 
@@ -213,7 +244,7 @@ func (srv *Server) handleConnection(conn net.Conn) {
 			r = compress(r)
 		}
 
-		resp := srv.Cmd(r, asyncCh)
+		resp := cmd(cl, r, asyncCh)
 		if srv.config.Compress || srv.config.Uncompress {
 			resp = uncompress(resp)
 		}
@@ -222,7 +253,28 @@ func (srv *Server) handleConnection(conn net.Conn) {
 
 }
 
-func (srv *Server) Cmd(m *redis.Resp, asyncCh chan *redis.Resp) *redis.Resp {
+func (srv *Server) Exit() {
+	if srv.listener != nil {
+		srv.listener.Close()
+	}
+	srv.done <- true
+}
+
+func (srv *Server) get() (util.Cmder, error) {
+	if srv.cluster != nil {
+		return srv.cluster, nil
+	}
+	return srv.pool.Get()
+
+}
+
+func (srv *Server) put(c util.Cmder) {
+	if srv.pool != nil {
+		srv.pool.Put(c.(*redis.Client))
+	}
+}
+
+func cmd(cl util.Cmder, m *redis.Resp, asyncCh chan *redis.Resp) *redis.Resp {
 	ms, err := m.Array()
 	if err != nil || len(ms) < 1 {
 		return redis.NewResp(errBadCmd)
@@ -234,14 +286,14 @@ func (srv *Server) Cmd(m *redis.Resp, asyncCh chan *redis.Resp) *redis.Resp {
 	}
 
 	doAsync := false
-	var fastResponse []byte
+	var fastResponse *redis.Resp
 	if asyncCh != nil {
 		fastResponse, doAsync = commands[strings.ToUpper(cmd)]
 	}
 
 	if doAsync {
 		asyncCh <- m
-		return redis.NewResp(fastResponse)
+		return fastResponse
 	}
 
 	args := make([]interface{}, 0, len(ms[1:]))
@@ -253,13 +305,7 @@ func (srv *Server) Cmd(m *redis.Resp, asyncCh chan *redis.Resp) *redis.Resp {
 		args = append(args, arg)
 	}
 
-	return srv.cluster.Cmd(cmd, args...)
-}
-
-func (srv *Server) Exit() {
-	if srv.listener != nil {
-		srv.listener.Close()
-	}
+	return cl.Cmd(cmd, args...)
 }
 
 func compress(m *redis.Resp) *redis.Resp {

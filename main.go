@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
 	"os/signal"
@@ -24,8 +25,10 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 	switch conf.Protocol {
 	case "redis":
 		srv, err = redis.New(conf, done)
-	case "redis-cluster":
-		srv, err = rcluster.New(conf, done)
+	case "redis-cluster", "redis-plus":
+		srv, err = rcluster.NewCluster(conf, done)
+	default:
+		err = errors.New("no valid option")
 	}
 	return
 }
@@ -46,12 +49,14 @@ func startOrReload() bool {
 		if !ok {
 			// Start a new relayer
 			r, err := getNewServer(conf)
-			if err == nil {
-				lib.Debugf("Starting new relayer from %s to %s", conf.Listen, conf.URL)
-				totalRelayers++
-				if e := r.Start(); e == nil {
-					relayers[conf.Listen] = r
-				}
+			if err != nil {
+				log.Println("Error starting relayer", conf.Protocol, err)
+				continue
+			}
+			lib.Debugf("Starting new relayer from %s to %s", conf.Listen, conf.URL)
+			totalRelayers++
+			if e := r.Start(); e == nil {
+				relayers[conf.Listen] = r
 			}
 		} else {
 			// The relayer exists, reload it
