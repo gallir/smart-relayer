@@ -29,10 +29,15 @@ type Server struct {
 	pool     *pool.Pool
 }
 
+type reqData struct {
+	cmd      string
+	args     []interface{}
+	answerCh chan *redis.Resp
+}
+
 const (
 	connectionRetries = 3
-	pipelineCommands  = 1000
-	requestBufferSize = 1024
+	requestBufferSize = 128
 	modeSync          = 0
 	modeSmart         = 1
 	minCompressSize   = 256
@@ -159,6 +164,50 @@ func (srv *Server) Start() (e error) {
 	return nil
 }
 
+func (srv *Server) handleConnection(conn net.Conn) {
+	defer conn.Close()
+
+	cl, e := srv.get()
+	if e != nil {
+		log.Println("error getting client for async", e)
+		return
+	}
+	defer srv.put(cl)
+
+	reqCh := make(chan *reqData, requestBufferSize)
+	defer close(reqCh)
+
+	go sender(cl, reqCh)
+
+	respCh := make(chan *redis.Resp)
+	reader := redis.NewRespReader(conn)
+	for {
+		err := conn.SetReadDeadline(time.Now().Add(listenTimeout * time.Second))
+		if err != nil {
+			log.Printf("error setting read deadline: %s", err)
+			return
+		}
+
+		req := reader.Read()
+		if redis.IsTimeout(req) {
+			continue
+		} else if req.IsType(redis.IOErr) {
+			return
+		}
+
+		if srv.config.Compress {
+			req = compress(req)
+		}
+
+		resp := process(req, reqCh, respCh)
+		if srv.config.Compress || srv.config.Uncompress {
+			resp = uncompress(resp)
+		}
+		resp.WriteTo(conn)
+	}
+
+}
+
 func (srv *Server) resetCluster() error {
 	log.Printf("Reload and reset redis cluster server at port %s for target %s", srv.config.Listen, srv.config.Host())
 
@@ -168,7 +217,7 @@ func (srv *Server) resetCluster() error {
 		if err != nil {
 			continue
 		}
-		if srv.cluster, err = cluster.New(addr); err != nil {
+		if srv.cluster, err = cluster.NewWithOpts(cluster.Opts{Addr: addr, PoolSize: srv.config.MaxIdleConnections}); err != nil {
 			log.Printf("Error in cluster %s: %s", addr, err)
 			srv.cluster = nil
 			continue
@@ -184,7 +233,7 @@ func (srv *Server) resetPool() error {
 	log.Printf("Reload and reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
 
 	var err error
-	srv.pool, err = pool.New("tcp", srv.config.Host(), srv.config.MaxConnections)
+	srv.pool, err = pool.New("tcp", srv.config.Host(), srv.config.MaxIdleConnections)
 	if err != nil {
 		srv.pool = nil
 		return errors.New("connection error")
@@ -192,65 +241,6 @@ func (srv *Server) resetPool() error {
 
 	lib.Debugf("Pool linked to %s", srv.config.Host())
 	return nil
-}
-
-func (srv *Server) handleConnection(conn net.Conn) {
-	defer conn.Close()
-
-	cl, e := srv.get()
-	if e != nil {
-		log.Println("error getting client", e)
-		return
-	}
-	defer srv.put(cl)
-
-	var asyncCh chan *redis.Resp
-
-	if srv.mode == modeSmart {
-		asyncCh = make(chan *redis.Resp, 64)
-		defer close(asyncCh)
-		go func() {
-			cl, e := srv.get()
-			if e != nil {
-				log.Println("error getting client for async", e)
-				return
-			}
-			defer srv.put(cl)
-
-			for m := range asyncCh {
-				cmd(cl, m, nil)
-			}
-		}()
-
-	}
-
-	rr := redis.NewRespReader(conn)
-	for {
-		err := conn.SetReadDeadline(time.Now().Add(listenTimeout * time.Second))
-		if err != nil {
-			log.Printf("error setting read deadline: %s", err)
-			return
-		}
-
-		r := rr.Read()
-		if redis.IsTimeout(r) {
-			continue
-		} else if r.IsType(redis.IOErr) {
-			lib.Debugf("IOErr")
-			return
-		}
-
-		if srv.config.Compress {
-			r = compress(r)
-		}
-
-		resp := cmd(cl, r, asyncCh)
-		if srv.config.Compress || srv.config.Uncompress {
-			resp = uncompress(resp)
-		}
-		resp.WriteTo(conn)
-	}
-
 }
 
 func (srv *Server) Exit() {
@@ -274,7 +264,16 @@ func (srv *Server) put(c util.Cmder) {
 	}
 }
 
-func cmd(cl util.Cmder, m *redis.Resp, asyncCh chan *redis.Resp) *redis.Resp {
+func sender(cl util.Cmder, reqCh chan *reqData) {
+	for m := range reqCh {
+		resp := cl.Cmd(m.cmd, m.args...)
+		if m.answerCh != nil {
+			m.answerCh <- resp
+		}
+	}
+}
+
+func process(m *redis.Resp, reqCh chan *reqData, responseChan chan *redis.Resp) *redis.Resp {
 	ms, err := m.Array()
 	if err != nil || len(ms) < 1 {
 		return redis.NewResp(errBadCmd)
@@ -283,17 +282,6 @@ func cmd(cl util.Cmder, m *redis.Resp, asyncCh chan *redis.Resp) *redis.Resp {
 	cmd, err := ms[0].Str()
 	if err != nil {
 		return redis.NewResp(errBadCmd)
-	}
-
-	doAsync := false
-	var fastResponse *redis.Resp
-	if asyncCh != nil {
-		fastResponse, doAsync = commands[strings.ToUpper(cmd)]
-	}
-
-	if doAsync {
-		asyncCh <- m
-		return fastResponse
 	}
 
 	args := make([]interface{}, 0, len(ms[1:]))
@@ -305,7 +293,19 @@ func cmd(cl util.Cmder, m *redis.Resp, asyncCh chan *redis.Resp) *redis.Resp {
 		args = append(args, arg)
 	}
 
-	return cl.Cmd(cmd, args...)
+	data := reqData{
+		cmd:  cmd,
+		args: args,
+	}
+
+	fastResponse, doAsync := commands[strings.ToUpper(cmd)]
+	if doAsync {
+		reqCh <- &data
+		return fastResponse
+	}
+	data.answerCh = responseChan
+	reqCh <- &data
+	return <-responseChan
 }
 
 func compress(m *redis.Resp) *redis.Resp {
