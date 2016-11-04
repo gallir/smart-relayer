@@ -26,7 +26,7 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 	case "redis":
 		srv, err = redis.New(conf, done)
 	case "redis-cluster", "redis-plus":
-		srv, err = rcluster.NewCluster(conf, done)
+		srv, err = rcluster.New(conf, done)
 	default:
 		err = errors.New("no valid option")
 	}

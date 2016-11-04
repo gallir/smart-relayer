@@ -31,7 +31,8 @@ type Server struct {
 
 type reqData struct {
 	cmd      string
-	args     []interface{}
+	args     [][]byte
+	compress bool
 	answerCh chan *redis.Resp
 }
 
@@ -51,8 +52,8 @@ var (
 	errBadCmd = errors.New("ERR bad command")
 	commands  map[string]*redis.Resp
 
-	respOK   = redis.NewResp([]byte("OK"))
-	respTrue = redis.NewResp(true)
+	respOK   = redis.NewRespSimple("OK")
+	respTrue = redis.NewResp(1)
 )
 
 func init() {
@@ -74,7 +75,7 @@ func init() {
 }
 
 // NewCluster creates a new Redis cluster client
-func NewCluster(c lib.RelayerConfig, done chan bool) (*Server, error) {
+func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done: done,
 	}
@@ -195,17 +196,54 @@ func (srv *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		if srv.config.Compress {
-			req = compress(req)
-		}
-
-		resp := process(req, reqCh, respCh)
+		resp := srv.process(req, reqCh, respCh)
 		if srv.config.Compress || srv.config.Uncompress {
 			resp = uncompress(resp)
 		}
 		resp.WriteTo(conn)
 	}
+}
 
+func (srv *Server) process(m *redis.Resp, reqCh chan *reqData, respCh chan *redis.Resp) *redis.Resp {
+	ms, err := m.Array()
+	if err != nil || len(ms) < 1 {
+		return redis.NewResp(errBadCmd)
+	}
+
+	cmd, err := ms[0].Str()
+	if err != nil {
+		return redis.NewResp(errBadCmd)
+	}
+
+	args := make([][]byte, 0, len(ms[1:]))
+	for _, argm := range ms[1:] {
+		arg, err := argm.Bytes()
+		if err != nil {
+			return redis.NewResp(errBadCmd)
+		}
+		args = append(args, arg)
+	}
+
+	data := reqData{
+		cmd:      cmd,
+		args:     args,
+		compress: srv.config.Compress,
+	}
+
+	doAsync := false
+	var fastResponse *redis.Resp
+	if srv.mode == modeSmart {
+		fastResponse, doAsync = commands[strings.ToUpper(cmd)]
+	}
+
+	if doAsync {
+		reqCh <- &data
+		return fastResponse
+	}
+
+	data.answerCh = respCh
+	reqCh <- &data
+	return <-respCh
 }
 
 func (srv *Server) resetCluster() error {
@@ -266,46 +304,19 @@ func (srv *Server) put(c util.Cmder) {
 
 func sender(cl util.Cmder, reqCh chan *reqData) {
 	for m := range reqCh {
-		resp := cl.Cmd(m.cmd, m.args...)
+		b := make([]interface{}, len(m.args))
+		for i := range m.args {
+			if m.compress {
+				b[i] = compressByte(m.args[i])
+			} else {
+				b[i] = m.args[i]
+			}
+		}
+		resp := cl.Cmd(m.cmd, b...)
 		if m.answerCh != nil {
 			m.answerCh <- resp
 		}
 	}
-}
-
-func process(m *redis.Resp, reqCh chan *reqData, responseChan chan *redis.Resp) *redis.Resp {
-	ms, err := m.Array()
-	if err != nil || len(ms) < 1 {
-		return redis.NewResp(errBadCmd)
-	}
-
-	cmd, err := ms[0].Str()
-	if err != nil {
-		return redis.NewResp(errBadCmd)
-	}
-
-	args := make([]interface{}, 0, len(ms[1:]))
-	for _, argm := range ms[1:] {
-		arg, err := argm.Str()
-		if err != nil {
-			return redis.NewResp(errBadCmd)
-		}
-		args = append(args, arg)
-	}
-
-	data := reqData{
-		cmd:  cmd,
-		args: args,
-	}
-
-	fastResponse, doAsync := commands[strings.ToUpper(cmd)]
-	if doAsync {
-		reqCh <- &data
-		return fastResponse
-	}
-	data.answerCh = responseChan
-	reqCh <- &data
-	return <-responseChan
 }
 
 func compress(m *redis.Resp) *redis.Resp {
@@ -337,14 +348,20 @@ func compress(m *redis.Resp) *redis.Resp {
 
 }
 
+func compressByte(b []byte) []byte {
+	if len(b) > minCompressSize {
+		b = append(magicSnappy, snappy.Encode(nil, b)...)
+	}
+	return b
+}
+
 func uncompress(m *redis.Resp) *redis.Resp {
 	if m.IsType(redis.Str) {
-		uncompressed, e := uncompressItem(m)
-		if e != nil {
-			log.Println(e)
+		b := uncompressItem(m)
+		if b == nil {
 			return m
 		}
-		return redis.NewResp(uncompressed)
+		return redis.NewResp(b)
 	}
 
 	ms, err := m.Array()
@@ -355,14 +372,17 @@ func uncompress(m *redis.Resp) *redis.Resp {
 	changed := false
 	items := make([]interface{}, 0, len(ms))
 	for _, item := range ms {
-		b, e := uncompressItem(item)
-		if b == nil { // Fatal error
-			log.Println(e)
-			return m
+		b := uncompressItem(item)
+		if b != nil {
+			changed = true
+			items = append(items, b)
+			continue
 		}
 
+		b, e := item.Bytes()
 		if e != nil {
-			changed = true
+			// Fatal error, return the same resp
+			return m
 		}
 		items = append(items, b)
 	}
@@ -374,23 +394,21 @@ func uncompress(m *redis.Resp) *redis.Resp {
 
 }
 
-func uncompressItem(item *redis.Resp) ([]byte, error) {
+func uncompressItem(item *redis.Resp) []byte {
 	if !item.IsType(redis.Str) {
-		return nil, errors.New("not a str")
+		return nil
 	}
 
 	b, e := item.Bytes()
 	if e != nil {
-		return nil, errors.New("couldn't read bytes")
+		return nil
 	}
 
 	if bytes.HasPrefix(b, magicSnappy) {
 		uncompressed, e := snappy.Decode(nil, b[len(magicSnappy):])
 		if e == nil {
-			b = uncompressed
-		} else {
-			return b, errors.New("error uncompressing")
+			return uncompressed
 		}
 	}
-	return b, nil
+	return nil
 }
