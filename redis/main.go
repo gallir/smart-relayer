@@ -32,8 +32,7 @@ type Server struct {
 
 const (
 	connectionRetries = 3
-	pipelineCommands  = 1000
-	requestBufferSize = 1024
+	requestBufferSize = 128
 	modeSync          = 0
 	modeSmart         = 1
 	connectTimeout    = 5 * time.Second
@@ -133,24 +132,20 @@ func (srv *Server) Start() (e error) {
 	log.Printf("Starting redis server at %s for target %s", addr, srv.config.Host())
 	// Serve a client
 	go func() {
-		defer func() {
-			srv.listener.Close()
-			srv.done <- true
-		}()
-
 		for {
 			netConn, e := srv.listener.Accept()
 			if e != nil {
 				log.Println("Exiting", addr)
 				return
 			}
-			go srv.serveClient(netConn)
+			go srv.handleConnection(netConn)
 		}
 	}()
 
 	return nil
 }
 
+// Reload the configuration
 func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	srv.Lock()
 	defer srv.Unlock()
@@ -177,15 +172,20 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	return nil
 }
 
+// Config returns the server configuration
 func (srv *Server) Config() *lib.RelayerConfig {
 	return &srv.config
 }
 
+// Exit closes the listener and send done to main
 func (srv *Server) Exit() {
-	srv.listener.Close()
+	if srv.listener != nil {
+		srv.listener.Close()
+	}
+	srv.done <- true
 }
 
-func (srv *Server) serveClient(netConn net.Conn) {
+func (srv *Server) handleConnection(netConn net.Conn) {
 	conn := lib.NewNetbuf(netConn, localReadTimeout, writeTimeout)
 	defer netConn.Close()
 

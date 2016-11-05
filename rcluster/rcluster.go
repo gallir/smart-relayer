@@ -25,8 +25,8 @@ type Server struct {
 	mode     int
 	done     chan bool
 	listener net.Listener
-	cluster  *cluster.Cluster
-	pool     *pool.Pool
+	//	cluster  *cluster.Cluster
+	pool util.Cmder
 }
 
 type reqData struct {
@@ -37,8 +37,7 @@ type reqData struct {
 }
 
 const (
-	connectionRetries = 3
-	requestBufferSize = 128
+	requestBufferSize = 64
 	modeSync          = 0
 	modeSmart         = 1
 	minCompressSize   = 256
@@ -52,8 +51,9 @@ var (
 	errBadCmd = errors.New("ERR bad command")
 	commands  map[string]*redis.Resp
 
-	respOK   = redis.NewRespSimple("OK")
-	respTrue = redis.NewResp(1)
+	respOK         = redis.NewRespSimple("OK")
+	respTrue       = redis.NewResp(1)
+	respBadCommand = redis.NewResp(errBadCmd)
 )
 
 func init() {
@@ -74,7 +74,7 @@ func init() {
 	}
 }
 
-// NewCluster creates a new Redis cluster client
+// New creates a new Redis cluster or pool client
 func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done: done,
@@ -89,6 +89,7 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	return srv, nil
 }
 
+// Reload the configuration
 func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	srv.Lock()
 	defer srv.Unlock()
@@ -114,11 +115,12 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	return nil
 }
 
+// Start listening in the specified local port
 func (srv *Server) Start() (e error) {
 	srv.Lock()
 	defer srv.Unlock()
 
-	if srv.cluster == nil && srv.pool == nil {
+	if srv.pool == nil {
 		return
 	}
 
@@ -155,7 +157,7 @@ func (srv *Server) Start() (e error) {
 		for {
 			netConn, e := srv.listener.Accept()
 			if e != nil {
-				log.Println("Exiting", addr, e)
+				log.Println("Exiting", addr)
 				return
 			}
 			go srv.handleConnection(netConn)
@@ -168,17 +170,10 @@ func (srv *Server) Start() (e error) {
 func (srv *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	cl, e := srv.get()
-	if e != nil {
-		log.Println("error getting client for async", e)
-		return
-	}
-	defer srv.put(cl)
-
 	reqCh := make(chan *reqData, requestBufferSize)
 	defer close(reqCh)
 
-	go sender(cl, reqCh)
+	go sender(srv.pool, reqCh)
 
 	respCh := make(chan *redis.Resp)
 	reader := redis.NewRespReader(conn)
@@ -207,19 +202,19 @@ func (srv *Server) handleConnection(conn net.Conn) {
 func (srv *Server) process(m *redis.Resp, reqCh chan *reqData, respCh chan *redis.Resp) *redis.Resp {
 	ms, err := m.Array()
 	if err != nil || len(ms) < 1 {
-		return redis.NewResp(errBadCmd)
+		return respBadCommand
 	}
 
 	cmd, err := ms[0].Str()
-	if err != nil {
-		return redis.NewResp(errBadCmd)
+	if err != nil || strings.ToUpper(cmd) == "SELECT" {
+		return respBadCommand
 	}
 
 	args := make([][]byte, 0, len(ms[1:]))
 	for _, argm := range ms[1:] {
 		arg, err := argm.Bytes()
 		if err != nil {
-			return redis.NewResp(errBadCmd)
+			return respBadCommand
 		}
 		args = append(args, arg)
 	}
@@ -255,15 +250,15 @@ func (srv *Server) resetCluster() error {
 		if err != nil {
 			continue
 		}
-		if srv.cluster, err = cluster.NewWithOpts(cluster.Opts{Addr: addr, PoolSize: srv.config.MaxIdleConnections}); err != nil {
+		if srv.pool, err = cluster.NewWithOpts(cluster.Opts{Addr: addr, PoolSize: srv.config.MaxIdleConnections}); err != nil {
 			log.Printf("Error in cluster %s: %s", addr, err)
-			srv.cluster = nil
+			srv.pool = nil
 			continue
 		}
 		lib.Debugf("Cluster linked to %s", addr)
 		return nil
 	}
-	srv.cluster = nil
+	srv.pool = nil
 	return errors.New("no available redis cluster nodes")
 }
 
@@ -281,6 +276,7 @@ func (srv *Server) resetPool() error {
 	return nil
 }
 
+// Exit closes the listener and send done to main
 func (srv *Server) Exit() {
 	if srv.listener != nil {
 		srv.listener.Close()
@@ -288,26 +284,12 @@ func (srv *Server) Exit() {
 	srv.done <- true
 }
 
-func (srv *Server) get() (util.Cmder, error) {
-	if srv.cluster != nil {
-		return srv.cluster, nil
-	}
-	return srv.pool.Get()
-
-}
-
-func (srv *Server) put(c util.Cmder) {
-	if srv.pool != nil {
-		srv.pool.Put(c.(*redis.Client))
-	}
-}
-
 func sender(cl util.Cmder, reqCh chan *reqData) {
 	for m := range reqCh {
 		b := make([]interface{}, len(m.args))
 		for i := range m.args {
-			if m.compress {
-				b[i] = compressByte(m.args[i])
+			if m.compress && len(b) > minCompressSize {
+				b[i] = append(magicSnappy, snappy.Encode(nil, m.args[i])...)
 			} else {
 				b[i] = m.args[i]
 			}
@@ -317,42 +299,6 @@ func sender(cl util.Cmder, reqCh chan *reqData) {
 			m.answerCh <- resp
 		}
 	}
-}
-
-func compress(m *redis.Resp) *redis.Resp {
-	ms, err := m.Array()
-	if err != nil || len(ms) < 1 {
-		return m
-	}
-
-	changed := false
-	items := make([]interface{}, 0, len(ms))
-	for _, item := range ms {
-		if item.IsType(redis.Str) {
-			b, e := item.Bytes()
-			if e != nil {
-				return m
-			}
-			if len(b) > minCompressSize {
-				b = append(magicSnappy, snappy.Encode(nil, b)...)
-				changed = true
-			}
-			items = append(items, b)
-		}
-	}
-
-	if changed {
-		return redis.NewResp(items)
-	}
-	return m
-
-}
-
-func compressByte(b []byte) []byte {
-	if len(b) > minCompressSize {
-		b = append(magicSnappy, snappy.Encode(nil, b)...)
-	}
-	return b
 }
 
 func uncompress(m *redis.Resp) *redis.Resp {
