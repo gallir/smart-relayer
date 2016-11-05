@@ -1,7 +1,6 @@
 package rcluster
 
 import (
-	"bytes"
 	"errors"
 	"log"
 	"net"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gallir/smart-relayer/lib"
-	"github.com/golang/snappy"
 	"github.com/mediocregopher/radix.v2/cluster"
 	"github.com/mediocregopher/radix.v2/pool"
 	"github.com/mediocregopher/radix.v2/redis"
@@ -40,14 +38,12 @@ const (
 	requestBufferSize = 64
 	modeSync          = 0
 	modeSmart         = 1
-	minCompressSize   = 256
 	listenTimeout     = 15
+	selectCommand     = "SELECT"
 )
 
 // errors
 var (
-	magicSnappy = []byte("$sy$")
-
 	errBadCmd = errors.New("ERR bad command")
 	commands  map[string]*redis.Resp
 
@@ -193,7 +189,7 @@ func (srv *Server) handleConnection(conn net.Conn) {
 
 		resp := srv.process(req, reqCh, respCh)
 		if srv.config.Compress || srv.config.Uncompress {
-			resp = uncompress(resp)
+			resp = lib.Uncompress(resp)
 		}
 		resp.WriteTo(conn)
 	}
@@ -206,7 +202,7 @@ func (srv *Server) process(m *redis.Resp, reqCh chan *reqData, respCh chan *redi
 	}
 
 	cmd, err := ms[0].Str()
-	if err != nil || strings.ToUpper(cmd) == "SELECT" {
+	if err != nil || strings.ToUpper(cmd) == selectCommand {
 		return respBadCommand
 	}
 
@@ -288,8 +284,8 @@ func sender(cl util.Cmder, reqCh chan *reqData) {
 	for m := range reqCh {
 		b := make([]interface{}, len(m.args))
 		for i := range m.args {
-			if m.compress && len(b) > minCompressSize {
-				b[i] = append(magicSnappy, snappy.Encode(nil, m.args[i])...)
+			if m.compress {
+				b[i] = lib.CompressBytes(m.args[i])
 			} else {
 				b[i] = m.args[i]
 			}
@@ -299,62 +295,4 @@ func sender(cl util.Cmder, reqCh chan *reqData) {
 			m.answerCh <- resp
 		}
 	}
-}
-
-func uncompress(m *redis.Resp) *redis.Resp {
-	if m.IsType(redis.Str) {
-		b := uncompressItem(m)
-		if b == nil {
-			return m
-		}
-		return redis.NewResp(b)
-	}
-
-	ms, err := m.Array()
-	if err != nil || len(ms) < 1 {
-		return m
-	}
-
-	changed := false
-	items := make([]interface{}, 0, len(ms))
-	for _, item := range ms {
-		b := uncompressItem(item)
-		if b != nil {
-			changed = true
-			items = append(items, b)
-			continue
-		}
-
-		b, e := item.Bytes()
-		if e != nil {
-			// Fatal error, return the same resp
-			return m
-		}
-		items = append(items, b)
-	}
-
-	if changed {
-		return redis.NewResp(items)
-	}
-	return m
-
-}
-
-func uncompressItem(item *redis.Resp) []byte {
-	if !item.IsType(redis.Str) {
-		return nil
-	}
-
-	b, e := item.Bytes()
-	if e != nil {
-		return nil
-	}
-
-	if bytes.HasPrefix(b, magicSnappy) {
-		uncompressed, e := snappy.Decode(nil, b[len(magicSnappy):])
-		if e == nil {
-			return uncompressed
-		}
-	}
-	return nil
 }
