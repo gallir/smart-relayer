@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/redis/pool"
 	"github.com/mediocregopher/radix.v2/redis"
 )
 
@@ -17,7 +18,7 @@ import (
 type Server struct {
 	sync.Mutex
 	Config   lib.RelayerConfig
-	pool     *pool
+	pool     *pool.Pool
 	mode     int
 	done     chan bool
 	listener net.Listener
@@ -27,8 +28,6 @@ const (
 	listenTimeout     = 15
 	connectionRetries = 3
 	requestBufferSize = 1024
-	modeSync          = 0
-	modeSmart         = 1
 	connectTimeout    = 5 * time.Second
 	serverReadTimeout = 5 * time.Second
 	writeTimeout      = 5 * time.Second
@@ -71,12 +70,11 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done: done,
 	}
-	srv.pool = newPool(srv, &c)
 	srv.Reload(&c)
 	return srv, nil
 }
 
-// Start accepts incoming connections on the Listener l
+// Start accepts incoming connections on the Listener
 func (srv *Server) Start() (e error) {
 	srv.Lock()
 	defer srv.Unlock()
@@ -131,22 +129,21 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	defer srv.Unlock()
 
 	reset := false
-	if srv.Config.URL != "" && srv.Config.URL != c.URL {
+	if srv.Config.URL != c.URL {
 		reset = true
 	}
-	srv.Config = *c // Save a copy
-	if c.Mode == "smart" {
-		srv.mode = modeSmart
-	} else {
-		srv.mode = modeSync
-	}
+	srv.Config = *c
+	srv.mode = c.Type()
+
 	if reset {
-		log.Printf("Reload and reset redis server at port %s for target %s", srv.Config.Listen, srv.Config.Host())
-		srv.pool.reset(c)
-		srv.pool = newPool(srv, c)
+		if srv.pool != nil {
+			log.Printf("Reload and reset redis server at port %s for target %s", srv.Config.Listen, srv.Config.Host())
+			srv.pool.Reset()
+		}
+		srv.pool = pool.New(c, NewClient)
 	} else {
 		log.Printf("Reload redis config at port %s for target %s", srv.Config.Listen, srv.Config.Host())
-		srv.pool.readConfig(c)
+		srv.pool.ReadConfig(c)
 	}
 
 	return nil
@@ -167,13 +164,13 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	defer conn.Flush()
 
 	reader := redis.NewRespReader(conn)
-	pooled, ok := srv.pool.get()
+	pooled, ok := srv.pool.Get()
 	if !ok {
 		log.Println("Redis server, no clients available from pool")
 		return
 	}
-	defer srv.pool.close(pooled)
-	client := pooled.client
+	defer srv.pool.Close(pooled)
+	client := pooled.Client
 	responseCh := make(chan *redis.Resp, 1)
 	defer close(responseCh)
 
@@ -194,7 +191,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			return
 		}
 
-		req := newRequest(r)
+		req := newRequest(r, &srv.Config)
 		if req == nil {
 			respBadCommand.WriteTo(conn)
 			continue
@@ -206,11 +203,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		req.database = currentDB
 
 		// Smart mode, answer immediately and forget
-		if srv.mode == modeSmart {
+		if srv.mode == lib.ModeSmart {
 			fastResponse, ok := commands[string(req.command)]
 			if ok {
 				fastResponse.WriteTo(conn)
-				ok = sendRequest(client.requestChan, req)
+				ok = client.Send(req)
 				if !ok {
 					log.Printf("Error sending request to redis client, exiting")
 					return
@@ -222,7 +219,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		// Synchronized mode
 		req.responseChannel = responseCh
 
-		ok := sendRequest(client.requestChan, req)
+		ok = client.Send(req)
 		if !ok {
 			log.Printf("Error sending request to redis client, exiting")
 			respKO.WriteTo(conn)

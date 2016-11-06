@@ -1,4 +1,4 @@
-package rcluster
+package cluster
 
 import (
 	"errors"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/redis"
 	"github.com/mediocregopher/radix.v2/cluster"
 	"github.com/mediocregopher/radix.v2/pool"
 	"github.com/mediocregopher/radix.v2/redis"
@@ -189,7 +190,7 @@ func (srv *Server) handleConnection(conn net.Conn) {
 
 		resp := srv.process(req, reqCh, respCh)
 		if srv.config.Compress || srv.config.Uncompress {
-			resp = lib.Uncompress(resp)
+			resp = compress.Uncompress(resp)
 		}
 		resp.WriteTo(conn)
 	}
@@ -246,7 +247,15 @@ func (srv *Server) resetCluster() error {
 		if err != nil {
 			continue
 		}
-		if srv.pool, err = cluster.NewWithOpts(cluster.Opts{Addr: addr, PoolSize: srv.config.MaxIdleConnections}); err != nil {
+
+		// Choose the highest value from config
+		size := 0
+		if srv.config.MaxIdleConnections > srv.config.MaxConnections {
+			size = srv.config.MaxIdleConnections
+		} else {
+			size = srv.config.MaxConnections
+		}
+		if srv.pool, err = cluster.NewWithOpts(cluster.Opts{Addr: addr, PoolSize: size}); err != nil {
 			log.Printf("Error in cluster %s: %s", addr, err)
 			srv.pool = nil
 			continue
@@ -258,6 +267,7 @@ func (srv *Server) resetCluster() error {
 	return errors.New("no available redis cluster nodes")
 }
 
+// The pool is only for testing, it doesn't ensure the use of the select'ed database
 func (srv *Server) resetPool() error {
 	log.Printf("Reload and reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
 
@@ -284,8 +294,8 @@ func sender(cl util.Cmder, reqCh chan *reqData) {
 	for m := range reqCh {
 		b := make([]interface{}, len(m.args))
 		for i := range m.args {
-			if m.compress {
-				b[i] = lib.CompressBytes(m.args[i])
+			if m.compress && len(m.args[i]) > compress.MinCompressSize {
+				b[i] = compress.CompressBytes(m.args[i])
 			} else {
 				b[i] = m.args[i]
 			}

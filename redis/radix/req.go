@@ -3,6 +3,7 @@ package redis2
 import (
 	"strings"
 
+	"github.com/gallir/smart-relayer/lib"
 	"github.com/mediocregopher/radix.v2/redis"
 )
 
@@ -14,11 +15,10 @@ type Request struct {
 	command         string
 	responseChannel chan *redis.Resp // Channel to send the response to the original client
 	database        int              // The current database at the time the request was issued
-	compress        bool
 }
 
-func newRequest(resp *redis.Resp) *Request {
-	r := &Request{resp, "", nil, unknownDB, false}
+func newRequest(resp *redis.Resp, c *lib.RelayerConfig) *Request {
+	r := &Request{resp, "", nil, unknownDB}
 
 	if resp != nil {
 		ms, err := resp.Array()

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/redis/pool"
 )
 
 // Request stores the data for each client request
@@ -18,13 +19,14 @@ type Request struct {
 	buffer          *bytes.Buffer
 	responseChannel chan []byte // Channel to send the response to the original client
 	database        int         // The current database at the time the request was issued
+	mode            int
 }
 
 // Server is the thread that listen for clients' connections
 type Server struct {
 	sync.Mutex
 	config   lib.RelayerConfig
-	pool     *pool
+	pool     *pool.Pool
 	mode     int
 	done     chan bool
 	listener net.Listener
@@ -33,8 +35,6 @@ type Server struct {
 const (
 	connectionRetries = 3
 	requestBufferSize = 128
-	modeSync          = 0
-	modeSmart         = 1
 	connectTimeout    = 5 * time.Second
 	serverReadTimeout = 5 * time.Second
 	writeTimeout      = 5 * time.Second
@@ -91,7 +91,6 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done: done,
 	}
-	srv.pool = newPool(srv, &c)
 	srv.Reload(&c)
 	return srv, nil
 }
@@ -151,24 +150,21 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	defer srv.Unlock()
 
 	reset := false
-	if srv.config.URL != "" && srv.config.URL != c.URL {
+	if srv.config.URL != c.URL {
 		reset = true
 	}
 	srv.config = *c // Save a copy
-	if c.Mode == "smart" {
-		srv.mode = modeSmart
-	} else {
-		srv.mode = modeSync
-	}
+	srv.mode = c.Type()
 	if reset {
-		log.Printf("Reload and reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
-		srv.pool.reset(c)
-		srv.pool = newPool(srv, c)
+		if srv.pool != nil {
+			log.Printf("Reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
+			srv.pool.Reset()
+		}
+		srv.pool = pool.New(c, NewClient)
 	} else {
 		log.Printf("Reload redis config at port %s for target %s", srv.config.Listen, srv.config.Host())
-		srv.pool.readConfig(c)
+		srv.pool.ReadConfig(c)
 	}
-
 	return nil
 }
 
@@ -191,19 +187,19 @@ func (srv *Server) handleConnection(netConn net.Conn) {
 
 	parser := newParser(conn)
 
-	pooled, ok := srv.pool.get()
+	pooled, ok := srv.pool.Get()
 	if !ok {
 		log.Println("Redis server, no clients available from pool")
 		return
 	}
-	defer srv.pool.close(pooled)
-	client := pooled.client
+	defer srv.pool.Close(pooled)
+	client := pooled.Client
 	responseCh := make(chan []byte, 1)
 	defer close(responseCh)
 
 	for {
-		req := Request{}
-		_, err := parser.read(&req, true)
+		req := &Request{}
+		_, err := parser.read(req, true)
 		if err != nil {
 			return
 		}
@@ -217,10 +213,10 @@ func (srv *Server) handleConnection(netConn net.Conn) {
 		req.database = parser.database
 
 		// Smart mode, answer immediately and forget
-		if srv.mode == modeSmart {
+		if srv.mode == lib.ModeSmart {
 			fastResponse, ok := commands[string(req.command)]
 			if ok {
-				ok = sendRequest(client.requestChan, &req)
+				ok = client.Send(req)
 				if !ok {
 					log.Printf("Error sending request to redis client, exiting")
 					return
@@ -233,7 +229,7 @@ func (srv *Server) handleConnection(netConn net.Conn) {
 		// Synchronized mode
 		req.responseChannel = responseCh
 
-		ok := sendRequest(client.requestChan, &req)
+		ok := client.Send(req)
 		if !ok {
 			log.Printf("Error sending request to redis client, exiting")
 			conn.Write(protoKO)
@@ -255,47 +251,6 @@ func (srv *Server) handleConnection(netConn net.Conn) {
 			return
 		}
 	}
-}
-
-func sendRequest(c chan *Request, r *Request) (ok bool) {
-	defer func() {
-		e := recover() // To avoid panic due to closed channels
-		if e != nil {
-			log.Printf("sendRequest: Recovered from error %s, channel length %d", e, len(c))
-			ok = false
-		}
-	}()
-
-	if c == nil {
-		lib.Debugf("Nil channel in send request")
-		return false
-	}
-
-	c <- r
-	return true
-}
-
-func sendAsyncRequest(c chan *Request, r *Request) (ok bool) {
-	defer func() {
-		e := recover() // To avoid panic due to closed channels
-		if e != nil {
-			log.Printf("sendAsyncRequest: Recovered from error %s, channel length %d", e, len(c))
-			ok = false
-		}
-	}()
-
-	if c == nil {
-		return
-	}
-
-	select {
-	case c <- r:
-		ok = true
-	default:
-		lib.Debugf("Error sending request, channel length %d", len(c))
-		ok = false
-	}
-	return
 }
 
 func sendAsyncResponse(c chan []byte, b []byte) (ok bool) {

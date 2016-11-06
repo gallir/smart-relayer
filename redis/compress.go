@@ -1,4 +1,4 @@
-package lib
+package compress
 
 import (
 	"bytes"
@@ -7,9 +7,15 @@ import (
 	"github.com/mediocregopher/radix.v2/redis"
 )
 
+const (
+	MinCompressSize = 256
+	magicChunk      = "\xff\x06\x00\x00" + magicBody
+	magicBody       = "sNaPpY"
+)
+
 var (
-	magicSnappy     = []byte("$sy$")
-	minCompressSize = 256
+	magicSnappy = []byte("$sy$")
+	buffer      = []byte{}
 )
 
 func Compress(r *redis.Resp) *redis.Resp {
@@ -22,22 +28,29 @@ func Compress(r *redis.Resp) *redis.Resp {
 		return r
 	}
 
+	changed := false
 	items := make([]interface{}, len(ms))
 	for i, arg := range ms {
 		b, e := arg.Bytes()
 		if e != nil {
 			return r
 		}
-		items[i] = CompressBytes(b)
+		if len(b) > MinCompressSize {
+			items[i] = CompressBytes(b)
+			changed = true
+		} else {
+			items[i] = arg
+		}
+	}
+	if !changed {
+		return r
 	}
 	return redis.NewResp(items)
 }
 
 func CompressBytes(b []byte) []byte {
-	if len(b) < minCompressSize {
-		return b
-	}
-	return append(magicSnappy, snappy.Encode(nil, b)...)
+	c := snappy.Encode(nil, b)
+	return append(magicSnappy, c...)
 }
 
 func Uncompress(m *redis.Resp) *redis.Resp {

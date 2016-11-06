@@ -8,6 +8,13 @@ type Relayer interface {
 	Exit()
 }
 
+type RelayerClient interface {
+	IsValid() bool
+	Exit()
+	Send(r interface{}) bool
+	Reload(*RelayerConfig)
+}
+
 type MainConfig struct {
 	ConfigFileName string
 	Debug          bool

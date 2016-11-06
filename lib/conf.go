@@ -7,6 +7,11 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+const (
+	ModeSync  = 0
+	ModeSmart = 1
+)
+
 type Config struct {
 	Comment string
 	Relayer []RelayerConfig
@@ -30,6 +35,14 @@ func ReadConfig(filename string) (config *Config, err error) {
 		config = &configuration
 	}
 	return
+}
+
+// Type return the value of Mode coded in a integer
+func (c *RelayerConfig) Type() int {
+	if c.Mode == "smart" || c.Mode == "async" {
+		return ModeSmart
+	}
+	return ModeSync
 }
 
 func (c *RelayerConfig) Scheme() (scheme string) {
