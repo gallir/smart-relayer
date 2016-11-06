@@ -16,7 +16,7 @@ import (
 // Server is the thread that listen for clients' connections
 type Server struct {
 	sync.Mutex
-	Config   lib.RelayerConfig
+	config   lib.RelayerConfig
 	pool     *pool.Pool
 	mode     int
 	done     chan bool
@@ -78,7 +78,7 @@ func (srv *Server) Start() (e error) {
 	srv.Lock()
 	defer srv.Unlock()
 
-	srv.listener, e = lib.Listener(&srv.Config)
+	srv.listener, e = lib.Listener(&srv.config)
 	if e != nil {
 		return e
 	}
@@ -88,7 +88,7 @@ func (srv *Server) Start() (e error) {
 		for {
 			netConn, e := srv.listener.Accept()
 			if e != nil {
-				log.Println("Exiting", srv.Config.ListenHost())
+				log.Println("Exiting", srv.config.ListenHost())
 				return
 			}
 			go srv.handleConnection(netConn)
@@ -104,20 +104,20 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	defer srv.Unlock()
 
 	reset := false
-	if srv.Config.URL != c.URL {
+	if srv.config.URL != c.URL {
 		reset = true
 	}
-	srv.Config = *c
+	srv.config = *c
 	srv.mode = c.Type()
 
 	if reset {
 		if srv.pool != nil {
-			log.Printf("Reload and reset redis server at port %s for target %s", srv.Config.Listen, srv.Config.Host())
+			log.Printf("Reload and reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
 			srv.pool.Reset()
 		}
 		srv.pool = pool.New(c, NewClient)
 	} else {
-		log.Printf("Reload redis config at port %s for target %s", srv.Config.Listen, srv.Config.Host())
+		log.Printf("Reload redis config at port %s for target %s", srv.config.Listen, srv.config.Host())
 		srv.pool.ReadConfig(c)
 	}
 
@@ -166,7 +166,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			return
 		}
 
-		req := newRequest(r, &srv.Config)
+		req := newRequest(r, &srv.config)
 		if req == nil {
 			respBadCommand.WriteTo(conn)
 			continue
