@@ -112,7 +112,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 
 	if reset {
 		if srv.pool != nil {
-			log.Printf("Reload and reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
+			log.Printf("Reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
 			srv.pool.Reset()
 		}
 		srv.pool = pool.New(c, NewClient)

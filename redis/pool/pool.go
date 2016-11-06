@@ -73,6 +73,9 @@ func (p *Pool) ReadConfig(c *lib.RelayerConfig) {
 }
 
 func (p *Pool) Reset() {
+	p.Lock()
+	defer p.Unlock()
+
 	for _, e := range p.clients {
 		e.Client.Exit()
 	}
@@ -89,6 +92,7 @@ func (p *Pool) Get() (e *elem, ok bool) {
 	if ok {
 		// Check the element is ok
 		if !e.Client.IsValid() {
+			e.Client.Exit()
 			// Replace it
 			i := e.ID
 			log.Printf("Error in client %d, replacing it", i)

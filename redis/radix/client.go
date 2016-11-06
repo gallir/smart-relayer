@@ -29,6 +29,7 @@ type Client struct {
 	queueChan          chan *Request // Requests sent to the Redis server, some pending of responses
 	lastConnectFailure time.Time
 	connectedAt        time.Time
+	failures           int
 }
 
 // NewClient creates a new client that connect to a Redis server
@@ -56,6 +57,10 @@ func (clt *Client) connect() bool {
 	clt.Lock()
 	defer clt.Unlock()
 
+	if clt.failures > 10 {
+		clt.ready = false
+		return false
+	}
 	if clt.lastConnectFailure.After(time.Now().Add(100 * time.Millisecond)) {
 		// It failed too recently
 		return false
@@ -70,8 +75,10 @@ func (clt *Client) connect() bool {
 		log.Println("Failed to connect to", clt.config.Host())
 		clt.conn = nil
 		clt.lastConnectFailure = time.Now()
+		clt.failures++
 		return false
 	}
+	clt.failures = 0
 	clt.connectedAt = time.Now()
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
 	//	clt.conn = lib.NewNetbuf(conn, serverReadTimeout, writeTimeout)
