@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log"
 	"net"
-	"os"
 	"sync"
 	"time"
 
@@ -79,41 +78,17 @@ func (srv *Server) Start() (e error) {
 	srv.Lock()
 	defer srv.Unlock()
 
-	connType := srv.Config.ListenScheme()
-	addr := srv.Config.ListenHost()
-
-	// Check that the socket does not exist
-	if connType == "unix" {
-		if s, err := os.Stat(addr); err == nil {
-			if (s.Mode() & os.ModeSocket) > 0 {
-				// Remove existing socket
-				// log.Println("Warning, removing existing socket", addr)
-				os.Remove(addr)
-			} else {
-				log.Println("socket", addr, s.Mode(), os.ModeSocket)
-				log.Fatalf("Socket %s exists and it's not a Unix socket", addr)
-			}
-		}
-	}
-
-	srv.listener, e = net.Listen(connType, addr)
+	srv.listener, e = lib.Listener(&srv.Config)
 	if e != nil {
-		log.Println("Error listening to", addr, e)
 		return e
 	}
 
-	if connType == "unix" {
-		// Make sure is accesible for everyone
-		os.Chmod(addr, 0777)
-	}
-
-	log.Printf("Starting redis server at %s for target %s", addr, srv.Config.Host())
-	// Serve a client
+	// Serve clients
 	go func() {
 		for {
 			netConn, e := srv.listener.Accept()
 			if e != nil {
-				log.Println("Exiting", addr)
+				log.Println("Exiting", srv.Config.ListenHost())
 				return
 			}
 			go srv.handleConnection(netConn)
