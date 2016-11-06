@@ -48,12 +48,11 @@ func Compress(r *redis.Resp) *redis.Resp {
 
 func CompressBytes(b []byte) []byte {
 	n := snappy.MaxEncodedLen(len(b)) + len(magicSnappy)
-	o := make([]byte, n)
-	copy(o, magicSnappy)
-	c := snappy.Encode(o[len(magicSnappy):], b)
-	c = o[:len(c)+len(magicSnappy)]
-	//fmt.Println("compressed", len(o), len(c), len(f), string(f[:14]), string(c[:10]))
-	return c
+	// Create the required slice once
+	buf := make([]byte, n)
+	copy(buf, magicSnappy)
+	c := snappy.Encode(buf[len(magicSnappy):], b)
+	return buf[:len(c)+len(magicSnappy)]
 }
 
 func Uncompress(m *redis.Resp) *redis.Resp {
