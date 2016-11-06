@@ -9,8 +9,6 @@ import (
 
 const (
 	MinCompressSize = 256
-	magicChunk      = "\xff\x06\x00\x00" + magicBody
-	magicBody       = "sNaPpY"
 )
 
 var (
@@ -49,8 +47,13 @@ func Compress(r *redis.Resp) *redis.Resp {
 }
 
 func CompressBytes(b []byte) []byte {
-	c := snappy.Encode(nil, b)
-	return append(magicSnappy, c...)
+	n := snappy.MaxEncodedLen(len(b)) + len(magicSnappy)
+	o := make([]byte, n)
+	copy(o, magicSnappy)
+	c := snappy.Encode(o[len(magicSnappy):], b)
+	c = o[:len(c)+len(magicSnappy)]
+	//fmt.Println("compressed", len(o), len(c), len(f), string(f[:14]), string(c[:10]))
+	return c
 }
 
 func Uncompress(m *redis.Resp) *redis.Resp {
