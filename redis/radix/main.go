@@ -236,29 +236,6 @@ func sendRequest(c chan *Request, r *Request) (ok bool) {
 	return true
 }
 
-func sendAsyncRequest(c chan *Request, r *Request) (ok bool) {
-	defer func() {
-		e := recover() // To avoid panic due to closed channels
-		if e != nil {
-			log.Printf("sendAsyncRequest: Recovered from error %s, channel length %d", e, len(c))
-			ok = false
-		}
-	}()
-
-	if c == nil {
-		return
-	}
-
-	select {
-	case c <- r:
-		ok = true
-	default:
-		lib.Debugf("Error sending request, channel length %d", len(c))
-		ok = false
-	}
-	return
-}
-
 func sendAsyncResponse(c chan *redis.Resp, r *redis.Resp) (ok bool) {
 	defer func() {
 		e := recover() // To avoid panic due to closed channels
