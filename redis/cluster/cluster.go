@@ -160,7 +160,7 @@ func (srv *Server) handleConnection(conn net.Conn) {
 
 		resp := srv.process(req, reqCh, respCh)
 		if srv.config.Compress || srv.config.Uncompress {
-			resp = compress.Uncompress(resp)
+			resp = compress.UResp(resp)
 		}
 		resp.WriteTo(conn)
 	}
@@ -282,7 +282,7 @@ func sender(cl util.Cmder, reqCh chan *reqData) {
 			if m.compress {
 				b, e := arg.Bytes()
 				if e == nil && len(b) > compress.MinCompressSize {
-					args[i] = compress.CompressBytes(b)
+					args[i] = compress.Bytes(b)
 				}
 			}
 		}

@@ -16,7 +16,8 @@ var (
 	buffer      = []byte{}
 )
 
-func Compress(r *redis.Resp) *redis.Resp {
+// Resp compresses an entire *Resp
+func Resp(r *redis.Resp) *redis.Resp {
 	if r.IsType(redis.Str) {
 		return r
 	}
@@ -34,7 +35,7 @@ func Compress(r *redis.Resp) *redis.Resp {
 			return r
 		}
 		if len(b) > MinCompressSize {
-			items[i] = CompressBytes(b)
+			items[i] = Bytes(b)
 			changed = true
 		} else {
 			items[i] = arg
@@ -46,7 +47,8 @@ func Compress(r *redis.Resp) *redis.Resp {
 	return redis.NewResp(items)
 }
 
-func CompressItems(rs []*redis.Resp) (args []*redis.Resp, changed bool) {
+// Items compresses *Resp that are items of a *Resp
+func Items(rs []*redis.Resp) (args []*redis.Resp, changed bool) {
 	args = make([]*redis.Resp, len(rs))
 	for i := range rs {
 		args[i] = rs[i]
@@ -56,17 +58,17 @@ func CompressItems(rs []*redis.Resp) (args []*redis.Resp, changed bool) {
 		}
 		if len(b) > MinCompressSize {
 			changed = true
-			args[i] = redis.NewResp(CompressBytes(b))
+			args[i] = redis.NewResp(Bytes(b))
 		}
 	}
 	if !changed {
 		args = rs
 	}
 	return
-
 }
 
-func CompressBytes(b []byte) []byte {
+// Bytes compress []bytes
+func Bytes(b []byte) []byte {
 	n := snappy.MaxEncodedLen(len(b)) + len(magicSnappy)
 	// Create the required slice once
 	buf := make([]byte, n)
@@ -75,13 +77,14 @@ func CompressBytes(b []byte) []byte {
 	return buf[:len(c)+len(magicSnappy)]
 }
 
-func Uncompress(m *redis.Resp) *redis.Resp {
+// UResp uncompress a complex *Resp
+func UResp(m *redis.Resp) *redis.Resp {
 	if m.IsType(redis.Str) {
-		b := UncompressItem(m)
-		if b == nil {
-			return m
+		b, ok := UItem(m)
+		if ok {
+			return redis.NewResp(b)
 		}
-		return redis.NewResp(b)
+		return m
 	}
 
 	ms, err := m.Array()
@@ -90,21 +93,15 @@ func Uncompress(m *redis.Resp) *redis.Resp {
 	}
 
 	changed := false
-	items := make([]interface{}, 0, len(ms))
-	for _, item := range ms {
-		b := UncompressItem(item)
-		if b != nil {
+	items := make([]*redis.Resp, len(ms))
+	for i, item := range ms {
+		b, ok := UItem(item)
+		if ok {
 			changed = true
-			items = append(items, b)
+			items[i] = redis.NewResp(b)
 			continue
 		}
-
-		b, e := item.Bytes()
-		if e != nil {
-			// Fatal error, return the same resp
-			return m
-		}
-		items = append(items, b)
+		items[i] = item
 	}
 
 	if changed {
@@ -114,21 +111,21 @@ func Uncompress(m *redis.Resp) *redis.Resp {
 
 }
 
-func UncompressItem(item *redis.Resp) []byte {
+func UItem(item *redis.Resp) (*redis.Resp, bool) {
 	if !item.IsType(redis.Str) {
-		return nil
+		return item, false
 	}
 
 	b, e := item.Bytes()
 	if e != nil {
-		return nil
+		return item, false
 	}
 
 	if bytes.HasPrefix(b, magicSnappy) {
 		uncompressed, e := snappy.Decode(nil, b[len(magicSnappy):])
 		if e == nil {
-			return uncompressed
+			return redis.NewResp(uncompressed), true
 		}
 	}
-	return nil
+	return item, false
 }

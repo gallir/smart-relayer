@@ -143,7 +143,7 @@ func (clt *Client) netListener(conn io.ReadWriter, queue chan *Request) {
 		}
 
 		if clt.config.Compress || clt.config.Uncompress {
-			r = compress.Uncompress(r)
+			r = compress.UResp(r)
 		}
 		sendAsyncResponse(req.responseChannel, r)
 	}
@@ -188,7 +188,7 @@ func (clt *Client) write(r *Request) (int64, error) {
 
 	resp := r.resp
 	if clt.config.Compress {
-		items, ok := compress.CompressItems(r.items)
+		items, ok := compress.Items(r.items)
 		if ok {
 			resp = redis.NewResp(items)
 		}
