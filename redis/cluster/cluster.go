@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bufio"
 	"errors"
 	"log"
 	"net"
@@ -134,8 +135,10 @@ func (srv *Server) Start() (e error) {
 	return nil
 }
 
-func (srv *Server) handleConnection(conn net.Conn) {
-	defer conn.Close()
+func (srv *Server) handleConnection(netCon net.Conn) {
+	defer netCon.Close()
+	conn := bufio.NewReadWriter(bufio.NewReader(netCon), bufio.NewWriter(netCon))
+	defer conn.Flush()
 
 	reqCh := make(chan *reqData, requestBufferSize)
 	defer close(reqCh)
@@ -145,7 +148,8 @@ func (srv *Server) handleConnection(conn net.Conn) {
 	respCh := make(chan *redis.Resp)
 	reader := redis.NewRespReader(conn)
 	for {
-		err := conn.SetReadDeadline(time.Now().Add(listenTimeout * time.Second))
+		conn.Flush()
+		err := netCon.SetReadDeadline(time.Now().Add(listenTimeout * time.Second))
 		if err != nil {
 			log.Printf("error setting read deadline: %s", err)
 			return
@@ -246,9 +250,10 @@ func (srv *Server) reloadPool(reset bool) error {
 	if srv.pool != nil {
 		p, ok := srv.pool.(*pool.Pool)
 		if !ok {
-			return errors.New("Relod pool failed, bad type")
+			return errors.New("Reload pool failed, bad type")
 		}
 		if !reset {
+			log.Printf("Reload redis pool server at port %s for target %s", srv.config.Listen, srv.config.Host())
 			return nil
 		}
 		log.Printf("Reset redis pool server at port %s for target %s", srv.config.Listen, srv.config.Host())
