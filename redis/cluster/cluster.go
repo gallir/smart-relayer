@@ -95,18 +95,12 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 		reset = true
 	}
 	srv.config = *c // Save a copy
-	if c.Mode == "smart" {
-		srv.mode = modeSmart
-	} else {
-		srv.mode = modeSync
-	}
+	srv.mode = c.Type()
 
-	if reset {
-		if srv.config.Protocol == "redis-cluster" {
-			return srv.resetCluster()
-		}
-		return srv.resetPool()
+	if srv.config.Protocol == "redis-cluster" {
+		return srv.reloadCluster(reset)
 	}
+	return srv.reloadPool(reset)
 
 	return nil
 }
@@ -214,8 +208,21 @@ func (srv *Server) process(m *redis.Resp, reqCh chan *reqData, respCh chan *redi
 	return <-respCh
 }
 
-func (srv *Server) resetCluster() error {
-	log.Printf("Reload and reset redis cluster server at port %s for target %s", srv.config.Listen, srv.config.Host())
+func (srv *Server) reloadCluster(reset bool) error {
+	if srv.pool != nil {
+		p, ok := srv.pool.(*cluster.Cluster)
+		if !ok {
+			return errors.New("Relod cluster failed, bad type")
+		}
+
+		if !reset {
+			log.Printf("Reload redis cluster server at port %s for target %s", srv.config.Listen, srv.config.Host())
+			e := p.Reset()
+			return e
+		}
+		log.Printf("Reset redis cluster server at port %s for target %s", srv.config.Listen, srv.config.Host())
+		p.Close()
+	}
 
 	// Allows a list of URLs separated by spaces
 	for _, url := range strings.Split(srv.config.URL, " ") {
@@ -244,8 +251,18 @@ func (srv *Server) resetCluster() error {
 }
 
 // The pool is only for testing, it doesn't ensure the use of the select'ed database
-func (srv *Server) resetPool() error {
-	log.Printf("Reload and reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
+func (srv *Server) reloadPool(reset bool) error {
+	if srv.pool != nil {
+		p, ok := srv.pool.(*pool.Pool)
+		if !ok {
+			return errors.New("Relod pool failed, bad type")
+		}
+		if !reset {
+			return nil
+		}
+		log.Printf("Reset redis pool server at port %s for target %s", srv.config.Listen, srv.config.Host())
+		p.Empty()
+	}
 
 	var err error
 	srv.pool, err = pool.New("tcp", srv.config.Host(), srv.config.MaxIdleConnections)
