@@ -24,8 +24,7 @@ type Server struct {
 	mode     int
 	done     chan bool
 	listener net.Listener
-	//	cluster  *cluster.Cluster
-	pool util.Cmder
+	pool     util.Cmder
 }
 
 type reqData struct {
@@ -102,8 +101,6 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 		return srv.reloadCluster(reset)
 	}
 	return srv.reloadPool(reset)
-
-	return nil
 }
 
 // Start listening in the specified local port
