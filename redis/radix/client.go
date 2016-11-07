@@ -188,7 +188,10 @@ func (clt *Client) write(r *Request) (int64, error) {
 
 	resp := r.resp
 	if clt.config.Compress {
-		resp = compress.Compress(r.resp)
+		items, ok := compress.CompressItems(r.items)
+		if ok {
+			resp = redis.NewResp(items)
+		}
 	}
 
 	c, err := resp.WriteTo(clt.buf)

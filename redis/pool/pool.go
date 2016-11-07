@@ -25,7 +25,7 @@ type CreateFunction func(*lib.RelayerConfig) lib.RelayerClient
 type Pool struct {
 	sync.Mutex
 	cf           CreateFunction
-	config       *lib.RelayerConfig
+	config       lib.RelayerConfig
 	clients      []*elem
 	free         []*elem
 	idle         []*elem
@@ -68,7 +68,7 @@ func (p *Pool) ReadConfig(c *lib.RelayerConfig) {
 		e.Client.Reload(c)
 	}
 
-	p.config = c
+	p.config = *c
 
 }
 
@@ -167,7 +167,7 @@ func (p *Pool) Close(e *elem) {
 
 func (p *Pool) _createElem(id int) (e *elem) {
 	//cl := p.server.NewClient()
-	cl := p.cf(p.config)
+	cl := p.cf(&p.config)
 	e = &elem{
 		ID:     id,
 		Client: cl,

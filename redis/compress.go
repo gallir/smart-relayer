@@ -46,6 +46,26 @@ func Compress(r *redis.Resp) *redis.Resp {
 	return redis.NewResp(items)
 }
 
+func CompressItems(rs []*redis.Resp) (args []*redis.Resp, changed bool) {
+	args = make([]*redis.Resp, len(rs))
+	for i := range rs {
+		args[i] = rs[i]
+		b, e := rs[i].Bytes()
+		if e != nil {
+			continue
+		}
+		if len(b) > MinCompressSize {
+			changed = true
+			args[i] = redis.NewResp(CompressBytes(b))
+		}
+	}
+	if !changed {
+		args = rs
+	}
+	return
+
+}
+
 func CompressBytes(b []byte) []byte {
 	n := snappy.MaxEncodedLen(len(b)) + len(magicSnappy)
 	// Create the required slice once
