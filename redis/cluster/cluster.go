@@ -29,7 +29,7 @@ type Server struct {
 
 type reqData struct {
 	cmd      string
-	args     [][]byte
+	args     []*redis.Resp
 	compress bool
 	answerCh chan *redis.Resp
 }
@@ -177,18 +177,9 @@ func (srv *Server) process(m *redis.Resp, reqCh chan *reqData, respCh chan *redi
 		return respBadCommand
 	}
 
-	args := make([][]byte, 0, len(ms[1:]))
-	for _, argm := range ms[1:] {
-		arg, err := argm.Bytes()
-		if err != nil {
-			return respBadCommand
-		}
-		args = append(args, arg)
-	}
-
 	data := reqData{
 		cmd:      cmd,
-		args:     args,
+		args:     ms[1:],
 		compress: srv.config.Compress,
 	}
 
@@ -285,15 +276,18 @@ func (srv *Server) Exit() {
 
 func sender(cl util.Cmder, reqCh chan *reqData) {
 	for m := range reqCh {
-		b := make([]interface{}, len(m.args))
-		for i := range m.args {
-			if m.compress && len(m.args[i]) > compress.MinCompressSize {
-				b[i] = compress.CompressBytes(m.args[i])
-			} else {
-				b[i] = m.args[i]
+		args := make([]interface{}, len(m.args))
+		for i, arg := range m.args {
+			args[i] = arg
+			if m.compress {
+				b, e := arg.Bytes()
+				if e == nil && len(b) > compress.MinCompressSize {
+					args[i] = compress.CompressBytes(b)
+				}
 			}
 		}
-		resp := cl.Cmd(m.cmd, b...)
+
+		resp := cl.Cmd(m.cmd, args...)
 		if m.answerCh != nil {
 			m.answerCh <- resp
 		}
