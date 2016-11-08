@@ -1,12 +1,5 @@
 package cluster
 
-import "github.com/mediocregopher/radix.v2/redis"
-
-type seqResp struct {
-	seq  uint64
-	resp *redis.Resp
-}
-
 type seqRespHeap []*reqData
 
 func (h *seqRespHeap) Len() int           { return len(*h) }
