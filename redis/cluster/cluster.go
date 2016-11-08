@@ -1,16 +1,13 @@
 package cluster
 
 import (
-	"bufio"
 	"errors"
 	"log"
 	"net"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gallir/smart-relayer/lib"
-	"github.com/gallir/smart-relayer/redis"
 	"github.com/mediocregopher/radix.v2/cluster"
 	"github.com/mediocregopher/radix.v2/pool"
 	"github.com/mediocregopher/radix.v2/redis"
@@ -28,17 +25,17 @@ type Server struct {
 }
 
 type reqData struct {
+	seq      uint64
 	cmd      string
 	args     []*redis.Resp
 	compress bool
 	answerCh chan *redis.Resp
+	resp     *redis.Resp
 }
 
 const (
-	requestBufferSize = 64
-	listenTimeout     = 15
-	maxSenders        = 2 // Max number of write goutines
-	selectCommand     = "SELECT"
+	listenTimeout = 15
+	selectCommand = "SELECT"
 )
 
 // errors
@@ -96,6 +93,11 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	srv.config = *c // Save a copy
 	srv.mode = c.Type()
 
+	if srv.mode == lib.ModeSync {
+		// Don't allow parallel with async, it's a waste of CPU's cycles
+		srv.config.Parallel = false
+	}
+
 	if srv.config.Protocol == "redis-cluster" {
 		return srv.reloadCluster(reset)
 	}
@@ -124,81 +126,11 @@ func (srv *Server) Start() (e error) {
 				log.Println("Exiting", srv.config.ListenHost())
 				return
 			}
-			go srv.handleConnection(netConn)
+			go Handle(srv, netConn)
 		}
 	}()
 
 	return nil
-}
-
-func (srv *Server) handleConnection(netCon net.Conn) {
-	defer netCon.Close()
-	conn := bufio.NewReadWriter(bufio.NewReader(netCon), bufio.NewWriter(netCon))
-	defer conn.Flush()
-
-	reqCh := make(chan *reqData, requestBufferSize)
-	defer close(reqCh)
-
-	for i := 0; i < maxSenders; i++ {
-		go sender(srv.pool, reqCh)
-	}
-
-	respCh := make(chan *redis.Resp)
-	reader := redis.NewRespReader(conn)
-	for {
-		conn.Flush()
-		err := netCon.SetReadDeadline(time.Now().Add(listenTimeout * time.Second))
-		if err != nil {
-			log.Printf("error setting read deadline: %s", err)
-			return
-		}
-
-		req := reader.Read()
-		if redis.IsTimeout(req) {
-			continue
-		} else if req.IsType(redis.IOErr) {
-			return
-		}
-
-		resp := srv.process(req, reqCh, respCh)
-		if srv.config.Compress || srv.config.Uncompress {
-			resp = compress.UResp(resp)
-		}
-		resp.WriteTo(conn)
-	}
-}
-
-func (srv *Server) process(m *redis.Resp, reqCh chan *reqData, respCh chan *redis.Resp) *redis.Resp {
-	ms, err := m.Array()
-	if err != nil || len(ms) < 1 {
-		return respBadCommand
-	}
-
-	cmd, err := ms[0].Str()
-	if err != nil || strings.ToUpper(cmd) == selectCommand {
-		return respBadCommand
-	}
-
-	data := reqData{
-		cmd:      cmd,
-		args:     ms[1:],
-		compress: srv.config.Compress,
-	}
-
-	doAsync := false
-	var fastResponse *redis.Resp
-	if srv.mode == lib.ModeSmart {
-		fastResponse, doAsync = commands[strings.ToUpper(cmd)]
-	}
-
-	if doAsync {
-		reqCh <- &data
-		return fastResponse
-	}
-
-	data.answerCh = respCh
-	reqCh <- &data
-	return <-respCh
 }
 
 func (srv *Server) reloadCluster(reset bool) error {
@@ -275,24 +207,4 @@ func (srv *Server) Exit() {
 		srv.listener.Close()
 	}
 	srv.done <- true
-}
-
-func sender(cl util.Cmder, reqCh chan *reqData) {
-	for m := range reqCh {
-		args := make([]interface{}, len(m.args))
-		for i, arg := range m.args {
-			args[i] = arg
-			if m.compress {
-				b, e := arg.Bytes()
-				if e == nil && len(b) > compress.MinCompressSize {
-					args[i] = compress.Bytes(b)
-				}
-			}
-		}
-
-		resp := cl.Cmd(m.cmd, args...)
-		if m.answerCh != nil {
-			m.answerCh <- resp
-		}
-	}
 }

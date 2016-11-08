@@ -18,14 +18,15 @@ type Config struct {
 }
 
 type RelayerConfig struct {
-	Protocol           string
-	Mode               string
-	Listen             string
-	URL                string
-	MaxConnections     int
-	MaxIdleConnections int
+	Protocol           string // redis | redis2 | redis-cluster | redis-plus
+	Mode               string // smart | sync
+	Listen             string // Local url
+	URL                string // Redis server url
+	MaxConnections     int    // Pool management
+	MaxIdleConnections int    // Pool managemente
 	Compress           bool
 	Uncompress         bool
+	Parallel           bool // For redis-cluster, send parallel requests
 }
 
 func ReadConfig(filename string) (config *Config, err error) {
