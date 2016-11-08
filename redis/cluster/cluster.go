@@ -36,9 +36,8 @@ type reqData struct {
 
 const (
 	requestBufferSize = 64
-	modeSync          = 0
-	modeSmart         = 1
 	listenTimeout     = 15
+	maxSenders        = 2 // Max number of write goutines
 	selectCommand     = "SELECT"
 )
 
@@ -140,7 +139,9 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	reqCh := make(chan *reqData, requestBufferSize)
 	defer close(reqCh)
 
-	go sender(srv.pool, reqCh)
+	for i := 0; i < senders; i++ {
+		go sender(srv.pool, reqCh)
+	}
 
 	respCh := make(chan *redis.Resp)
 	reader := redis.NewRespReader(conn)
@@ -186,7 +187,7 @@ func (srv *Server) process(m *redis.Resp, reqCh chan *reqData, respCh chan *redi
 
 	doAsync := false
 	var fastResponse *redis.Resp
-	if srv.mode == modeSmart {
+	if srv.mode == lib.ModeSmart {
 		fastResponse, doAsync = commands[strings.ToUpper(cmd)]
 	}
 
