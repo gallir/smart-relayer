@@ -166,6 +166,16 @@ func (h *connHandler) sender() {
 	}
 }
 
+// This function ensures the responses are returned ordered
+// using a priority queue when several goroutines are used for
+// sending requests in parallel to the redis server. It DOES NOT
+// ensure that the request were executed in order, a GET still
+// can return (nil) before a previous SET is processed.
+// But anyway, the computation cost is no high and may serve
+// to improve behaviour in heavy clients that send a lot of data
+// to the server.
+// WARN: you've wanrned, think twice and use the "parallel" option
+// only if you are sure.
 func (h *connHandler) parallel(m *reqData, args []interface{}) {
 	h.Lock()
 	heap.Push(&h.pQueue, m)
