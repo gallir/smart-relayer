@@ -139,7 +139,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	reqCh := make(chan *reqData, requestBufferSize)
 	defer close(reqCh)
 
-	for i := 0; i < senders; i++ {
+	for i := 0; i < maxSenders; i++ {
 		go sender(srv.pool, reqCh)
 	}
 
