@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	requestBufferSize = 8
+	requestBufferSize = 64
 )
 
 type connHandler struct {
