@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -11,6 +12,10 @@ import (
 	"github.com/gallir/smart-relayer/redis/cluster"
 	"github.com/gallir/smart-relayer/redis/fast"
 	"github.com/gallir/smart-relayer/redis/radix"
+)
+
+const (
+	version = "3.0"
 )
 
 var (
@@ -80,6 +85,12 @@ func startOrReload() bool {
 }
 
 func main() {
+
+	if lib.GlobalConfig.ShowVersion {
+		fmt.Println("smart-relayer version", version)
+		os.Exit(0)
+	}
+
 	if !startOrReload() {
 		os.Exit(1)
 	}

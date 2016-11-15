@@ -18,6 +18,7 @@ type RelayerClient interface {
 type MainConfig struct {
 	ConfigFileName string
 	Debug          bool
+	ShowVersion    bool
 }
 
 // GlobalConfig is the configuration for the main programm
@@ -26,5 +27,6 @@ var GlobalConfig MainConfig
 func init() {
 	flag.StringVar(&GlobalConfig.ConfigFileName, "c", "relayer.conf", "Configuration filename")
 	flag.BoolVar(&GlobalConfig.Debug, "d", false, "Show debug info")
+	flag.BoolVar(&GlobalConfig.ShowVersion, "v", false, "Show version and exit")
 	flag.Parse()
 }

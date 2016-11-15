@@ -27,6 +27,7 @@ type RelayerConfig struct {
 	Compress           bool
 	Uncompress         bool
 	Parallel           bool // For redis-cluster, send parallel requests
+	Pipeline           int  // If > 0 it does pipelining (buffering)
 }
 
 func ReadConfig(filename string) (config *Config, err error) {

@@ -30,6 +30,7 @@ type Client struct {
 	lastConnectFailure time.Time
 	connectedAt        time.Time
 	failures           int
+	pipelined          int
 }
 
 // NewClient creates a new client that connect to a Redis server
@@ -49,6 +50,9 @@ func (clt *Client) Reload(c *lib.RelayerConfig) {
 	clt.Lock()
 	defer clt.Unlock()
 
+	if clt.ready {
+		clt.flush(true)
+	}
 	clt.config = *c
 	clt.mode = clt.config.Type()
 }
@@ -125,12 +129,7 @@ func (clt *Client) listen(ch chan *Request) {
 // This goroutine listens for incoming answers from the Redis server
 func (clt *Client) netListener(conn io.ReadWriter, queue chan *Request) {
 	reader := redis.NewRespReader(conn)
-	for {
-		req, more := <-queue
-		if !more {
-			lib.Debugf("Net listener exiting")
-			return
-		}
+	for req := range queue {
 		r := reader.Read()
 		if req == nil {
 			continue
@@ -147,6 +146,7 @@ func (clt *Client) netListener(conn io.ReadWriter, queue chan *Request) {
 		}
 		sendAsyncResponse(req.responseChannel, r)
 	}
+	lib.Debugf("Net listener exiting")
 }
 
 func (clt *Client) purgeRequests() {
@@ -181,7 +181,10 @@ func (clt *Client) write(r *Request) (int64, error) {
 			clt.disconnect()
 			return 0, fmt.Errorf("Error in select")
 		}
-		clt.buf.Flush()
+		err = clt.flush(false)
+		if err != nil {
+			return 0, err
+		}
 		clt.database = r.database
 		clt.queueChan <- nil
 	}
@@ -195,16 +198,34 @@ func (clt *Client) write(r *Request) (int64, error) {
 	}
 
 	c, err := resp.WriteTo(clt.buf)
-	if err == nil {
-		err = clt.buf.Flush()
-	}
 	if err != nil {
 		lib.Debugf("Failed in write: %s", err)
 		clt.disconnect()
+		return 0, err
+	}
+
+	err = clt.flush(r.responseChannel != nil) // Force flush if it's an sync command
+	if err != nil {
+		return 0, err
 	}
 
 	clt.queueChan <- r
 	return c, err
+}
+func (clt *Client) flush(force bool) error {
+	if force || clt.config.Pipeline == 0 && clt.pipelined >= clt.config.Pipeline || len(clt.requestChan) == 0 {
+		err := clt.buf.Flush()
+		clt.pipelined = 0
+		if err != nil {
+			lib.Debugf("Failed in flush: %s", err)
+			clt.disconnect()
+			return err
+		}
+	} else {
+		// Don't flush yet, for pipelining
+		clt.pipelined++
+	}
+	return nil
 }
 
 func (clt *Client) disconnect() {
