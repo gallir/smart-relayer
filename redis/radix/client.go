@@ -70,9 +70,11 @@ func (clt *Client) connect() bool {
 		return false
 	}
 
+	/* Don't flush old connection
 	if clt.buf != nil {
 		clt.buf.Flush()
 	}
+	*/
 
 	conn, err := net.DialTimeout(clt.config.Scheme(), clt.config.Host(), connectTimeout)
 	if err != nil {

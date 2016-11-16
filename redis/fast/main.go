@@ -27,6 +27,7 @@ type Server struct {
 	config   lib.RelayerConfig
 	pool     *pool.Pool
 	mode     int
+	exiting  bool
 	done     chan bool
 	listener net.Listener
 }
@@ -108,8 +109,16 @@ func (srv *Server) Start() (e error) {
 		for {
 			netConn, e := srv.listener.Accept()
 			if e != nil {
-				log.Println("Exiting", srv.config.ListenHost())
-				return
+				if netErr, ok := e.(net.Error); ok && netErr.Timeout() {
+					// Paranoid, ignore timeout errors
+					log.Println("Timeout at local listener", srv.config.ListenHost(), e)
+					continue
+				}
+				if srv.exiting {
+					log.Println("Exiting local listener", srv.config.ListenHost())
+					return
+				}
+				log.Println("Error in local listener, exiting", srv.config.ListenHost(), e)
 			}
 			go srv.handleConnection(netConn)
 		}
@@ -149,6 +158,7 @@ func (srv *Server) Config() *lib.RelayerConfig {
 
 // Exit closes the listener and send done to main
 func (srv *Server) Exit() {
+	srv.exiting = true
 	if srv.listener != nil {
 		srv.listener.Close()
 	}

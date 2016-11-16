@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	version = "3.0"
+	version = "3.0.1"
 )
 
 var (
@@ -110,7 +110,8 @@ func main() {
 	// Exit
 	go func() {
 		for {
-			_ = <-exitSig
+			s := <-exitSig
+			log.Printf("Signal %d received, exiting", s)
 			for _, r := range relayers {
 				r.Exit()
 			}
