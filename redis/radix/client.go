@@ -2,14 +2,11 @@ package redis2
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
 	"time"
-
-	"io"
-
-	"bufio"
 
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis"
@@ -22,8 +19,8 @@ type Client struct {
 	config             lib.RelayerConfig
 	mode               int
 	ready              bool
-	conn               io.ReadWriteCloser
-	buf                *bufio.ReadWriter
+	conn               net.Conn
+	buf                *lib.NetBuffedReadWriter
 	requestChan        chan *Request // The relayer sends the requests via this channel
 	database           int           // The current selected database
 	queueChan          chan *Request // Requests sent to the Redis server, some pending of responses
@@ -87,10 +84,9 @@ func (clt *Client) connect() bool {
 	clt.failures = 0
 	clt.connectedAt = time.Now()
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
-	//	clt.conn = lib.NewNetbuf(conn, serverReadTimeout, writeTimeout)
 	clt.conn = conn
 	clt.queueChan = make(chan *Request, requestBufferSize)
-	clt.buf = bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
+	clt.buf = lib.NewNetReadWriter(conn, responseTimeout, 0)
 
 	go clt.netListener(clt.buf, clt.queueChan)
 
@@ -129,16 +125,17 @@ func (clt *Client) listen(ch chan *Request) {
 }
 
 // This goroutine listens for incoming answers from the Redis server
-func (clt *Client) netListener(conn io.ReadWriter, queue chan *Request) {
-	reader := redis.NewRespReader(conn)
+func (clt *Client) netListener(buf io.ReadWriter, queue chan *Request) {
+	reader := redis.NewRespReader(buf)
 	for req := range queue {
 		r := reader.Read()
 		if req == nil {
 			continue
 		}
 
-		if r.Err != nil {
+		if r.Err != nil && r.IsType(redis.IOErr) {
 			log.Printf("Error with server %s connection: %s", clt.config.Host(), r.Err)
+			sendAsyncResponse(req.responseChannel, respKO) // Send back and error immediately
 			clt.disconnect()
 			return
 		}

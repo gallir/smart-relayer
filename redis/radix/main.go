@@ -1,7 +1,6 @@
 package redis2
 
 import (
-	"bufio"
 	"errors"
 	"log"
 	"net"
@@ -25,15 +24,12 @@ type Server struct {
 }
 
 const (
-	listenTimeout     = 15
 	connectionRetries = 3
 	requestBufferSize = 1024
+	listenTimeout     = 0 * time.Second // Don't timeout on local clients
 	connectTimeout    = 5 * time.Second
-	serverReadTimeout = 5 * time.Second
-	writeTimeout      = 5 * time.Second
-	maxIdle           = 10 * time.Second
-	responseTimeout   = 20 * time.Second
-	localReadTimeout  = 600 * time.Second
+	maxIdle           = 15 * time.Second
+	responseTimeout   = 30 * time.Second
 	selectCommand     = "SELECT"
 )
 
@@ -146,7 +142,7 @@ func (srv *Server) Exit() {
 func (srv *Server) handleConnection(netCon net.Conn) {
 	defer netCon.Close()
 
-	conn := bufio.NewReadWriter(bufio.NewReader(netCon), bufio.NewWriter(netCon))
+	conn := lib.NewNetReadWriter(netCon, listenTimeout, 0)
 	defer conn.Flush()
 
 	reader := redis.NewRespReader(conn)
@@ -164,16 +160,14 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 	for {
 		conn.Flush()
-		err := netCon.SetReadDeadline(time.Now().Add(listenTimeout * time.Second))
-		if err != nil {
-			log.Printf("error setting read deadline: %s", err)
-			return
-		}
-
 		r := reader.Read()
-		if redis.IsTimeout(r) {
-			continue
-		} else if r.IsType(redis.IOErr) {
+		if r.IsType(redis.IOErr) {
+			if redis.IsTimeout(r) {
+				// Paranoid, don't close it just log it
+				log.Printf("Local client listen timeout at", srv.config.Listen)
+				continue
+			}
+			// Connection was closed
 			return
 		}
 
