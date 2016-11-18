@@ -67,15 +67,9 @@ func (clt *Client) connect() bool {
 		return false
 	}
 
-	/* Don't flush old connection
-	if clt.buf != nil {
-		clt.buf.Flush()
-	}
-	*/
-
 	conn, err := net.DialTimeout(clt.config.Scheme(), clt.config.Host(), connectTimeout)
 	if err != nil {
-		log.Println("Failed to connect to", clt.config.Host())
+		lib.Debugf("Failed to connect to %s", clt.config.Host())
 		clt.conn = nil
 		clt.lastConnectFailure = time.Now()
 		clt.failures++
@@ -86,7 +80,7 @@ func (clt *Client) connect() bool {
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
 	clt.conn = conn
 	clt.queueChan = make(chan *Request, requestBufferSize)
-	clt.buf = lib.NewNetReadWriter(conn, responseTimeout, 0)
+	clt.buf = lib.NewNetReadWriter(conn, time.Duration(clt.config.Timeout)*time.Second, 0)
 
 	go clt.netListener(clt.buf, clt.queueChan)
 
@@ -110,7 +104,7 @@ func (clt *Client) listen(ch chan *Request) {
 			}
 			_, err := clt.write(req)
 			if err != nil {
-				log.Println("Error writing:", err)
+				log.Println("Error writing:", clt.config.Host(), err)
 				sendAsyncResponse(req.responseChannel, respKO)
 				clt.disconnect()
 			}
@@ -134,7 +128,11 @@ func (clt *Client) netListener(buf io.ReadWriter, queue chan *Request) {
 		}
 
 		if r.Err != nil && r.IsType(redis.IOErr) {
-			log.Printf("Error with server %s connection: %s", clt.config.Host(), r.Err)
+			if redis.IsTimeout(r) {
+				log.Printf("Timeout (%d secs) at %s", clt.config.Timeout, clt.config.Host())
+			} else {
+				log.Printf("Error with server %s connection: %s", clt.config.Host(), r.Err)
+			}
 			sendAsyncResponse(req.responseChannel, respKO) // Send back and error immediately
 			clt.disconnect()
 			return
@@ -265,21 +263,26 @@ func (clt *Client) IsValid() bool {
 	return clt.ready
 }
 
-func (clt *Client) Send(req interface{}) (ok bool) {
+func (clt *Client) Send(req interface{}) (e error) {
 	r := req.(*Request)
 	defer func() {
-		e := recover() // To avoid panic due to closed channels
-		if e != nil {
+		r := recover() // To avoid panic due to closed channels
+		if r != nil {
 			log.Printf("sendRequest: Recovered from error %s, channel length %d", e, len(clt.requestChan))
-			ok = false
+			e = r.(error)
 		}
 	}()
 
 	if clt.requestChan == nil {
 		lib.Debugf("Nil channel in send request")
-		return false
+		return errKO
+	}
+
+	if len(clt.requestChan) == requestBufferSize {
+		log.Println("Redis overloaded", clt.config.Host())
+		return errOverloaded
 	}
 
 	clt.requestChan <- r
-	return true
+	return nil
 }

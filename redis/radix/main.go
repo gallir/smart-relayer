@@ -29,13 +29,13 @@ const (
 	listenTimeout     = 0 * time.Second // Don't timeout on local clients
 	connectTimeout    = 5 * time.Second
 	maxIdle           = 15 * time.Second
-	responseTimeout   = 30 * time.Second
 	selectCommand     = "SELECT"
 )
 
 var (
 	errBadCmd      = errors.New("ERR bad command")
 	errKO          = errors.New("fatal error")
+	errOverloaded  = errors.New("Redis overloaded")
 	respOK         = redis.NewRespSimple("OK")
 	respTrue       = redis.NewResp(1)
 	respBadCommand = redis.NewResp(errBadCmd)
@@ -114,6 +114,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	if srv.config.URL != c.URL {
 		reset = true
 	}
+
 	srv.config = *c
 	srv.mode = c.Type()
 
@@ -165,7 +166,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if r.IsType(redis.IOErr) {
 			if redis.IsTimeout(r) {
 				// Paranoid, don't close it just log it
-				log.Printf("Local client listen timeout at", srv.config.Listen)
+				log.Println("Local client listen timeout at", srv.config.Listen)
 				continue
 			}
 			// Connection was closed
@@ -187,12 +188,13 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if srv.mode == lib.ModeSmart {
 			fastResponse, ok := commands[string(req.command)]
 			if ok {
-				fastResponse.WriteTo(conn)
-				ok = client.Send(req)
-				if !ok {
-					log.Printf("Error sending request to redis client, exiting")
-					return
+				e := client.Send(req)
+				if e != nil {
+					log.Println("Error sending request to redis client", srv.config.Host(), e)
+					redis.NewResp(e).WriteTo(conn)
+					continue
 				}
+				fastResponse.WriteTo(conn)
 				continue
 			}
 		}
@@ -200,27 +202,37 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		// Synchronized mode
 		req.responseChannel = responseCh
 
-		ok = client.Send(req)
-		if !ok {
-			log.Printf("Error sending request to redis client, exiting")
-			respKO.WriteTo(conn)
-			return
+		e := client.Send(req)
+		if e != nil {
+			log.Println("Error sending request to redis client", srv.config.Host(), e)
+			redis.NewResp(e).WriteTo(conn)
+			continue
 		}
 
-		select {
-		case response, more := <-responseCh:
-			if !more {
-				// The client has closed the channel
-				lib.Debugf("Redis client has closed channel, exiting")
-				return
-			}
-			response.WriteTo(conn)
-		case <-time.After(responseTimeout):
-			// Something very wrong happened in the client
-			log.Println("Timeout waiting a response, closing client connection")
-			respKO.WriteTo(conn)
+		response, more := <-responseCh
+		if !more {
+			// The client has closed the channel
+			lib.Debugf("Redis client has closed channel, exiting")
 			return
 		}
+		response.WriteTo(conn)
+
+		/*
+			select {
+			case response, more := <-responseCh:
+				if !more {
+					// The client has closed the channel
+					lib.Debugf("Redis client has closed channel, exiting")
+					return
+				}
+				response.WriteTo(conn)
+			case <-time.After(responseTimeout):
+				// Something very wrong happened in the client
+				log.Println("Timeout waiting a response, closing client connection")
+				respKO.WriteTo(conn)
+				return
+			}
+		*/
 	}
 }
 

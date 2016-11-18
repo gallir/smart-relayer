@@ -10,12 +10,11 @@ import (
 
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/cluster"
-	"github.com/gallir/smart-relayer/redis/fast"
 	"github.com/gallir/smart-relayer/redis/radix"
 )
 
 const (
-	version = "3.0.2"
+	version = "4.0.1"
 )
 
 var (
@@ -29,9 +28,7 @@ var (
 
 func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 	switch conf.Protocol {
-	case "redis":
-		srv, err = redis.New(conf, done)
-	case "redis2":
+	case "redis", "redis2":
 		srv, err = redis2.New(conf, done)
 	case "redis-cluster", "redis-plus":
 		srv, err = cluster.New(conf, done)

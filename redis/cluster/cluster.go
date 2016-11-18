@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 
+	"time"
+
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/mediocregopher/radix.v2/cluster"
 	"github.com/mediocregopher/radix.v2/pool"
@@ -45,6 +47,7 @@ var (
 	commands  map[string]*redis.Resp
 
 	respOK         = redis.NewRespSimple("OK")
+	respPong       = redis.NewRespSimple("PONG")
 	respTrue       = redis.NewResp(1)
 	respBadCommand = redis.NewResp(errBadCmd)
 )
@@ -64,6 +67,7 @@ func init() {
 		"EXPIREAT":  respTrue,
 		"PEXPIRE":   respTrue,
 		"PEXPIREAT": respTrue,
+		"PING":      respPong,
 	}
 }
 
@@ -173,7 +177,11 @@ func (srv *Server) reloadCluster(reset bool) error {
 		} else {
 			size = srv.config.MaxConnections
 		}
-		if srv.pool, err = cluster.NewWithOpts(cluster.Opts{Addr: addr, PoolSize: size}); err != nil {
+		if srv.pool, err = cluster.NewWithOpts(cluster.Opts{
+			Addr:     addr,
+			PoolSize: size,
+			Timeout:  time.Duration(srv.config.Timeout) * time.Second,
+		}); err != nil {
 			log.Printf("Error in cluster %s: %s", addr, err)
 			srv.pool = nil
 			continue

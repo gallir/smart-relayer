@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	ModeSync  = 0
-	ModeSmart = 1
+	ModeSync        = 0
+	ModeSmart       = 1
+	responseTimeout = 30
 )
 
 type Config struct {
@@ -28,14 +29,24 @@ type RelayerConfig struct {
 	Uncompress         bool
 	Parallel           bool // For redis-cluster, send parallel requests
 	Pipeline           int  // If > 0 it does pipelining (buffering)
+	Timeout            int  // Timeout in seconds to wait for responses from the server
 }
 
 func ReadConfig(filename string) (config *Config, err error) {
 	var configuration Config
 	_, err = toml.DecodeFile(filename, &configuration)
-	if err == nil {
-		config = &configuration
+	if err != nil {
+		return
 	}
+
+	config = &configuration
+
+	for _, r := range config.Relayer {
+		if r.Timeout == 0 {
+			r.Timeout = responseTimeout
+		}
+	}
+
 	return
 }
 

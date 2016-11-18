@@ -11,7 +11,7 @@ type Relayer interface {
 type RelayerClient interface {
 	IsValid() bool
 	Exit()
-	Send(r interface{}) bool
+	Send(r interface{}) error
 	Reload(*RelayerConfig)
 }
 
