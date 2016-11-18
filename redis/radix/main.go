@@ -75,15 +75,16 @@ func (srv *Server) Start() (e error) {
 	srv.Lock()
 	defer srv.Unlock()
 
-	srv.listener, e = lib.Listener(&srv.config)
+	srv.listener, e = lib.NewListener(srv.config)
 	if e != nil {
 		return e
 	}
 
 	// Serve clients
-	go func() {
+	go func(l net.Listener) {
+		defer srv.listener.Close()
 		for {
-			netConn, e := srv.listener.Accept()
+			netConn, e := l.Accept()
 			if e != nil {
 				if netErr, ok := e.(net.Error); ok && netErr.Timeout() {
 					// Paranoid, ignore timeout errors
@@ -99,7 +100,7 @@ func (srv *Server) Start() (e error) {
 			}
 			go srv.handleConnection(netConn)
 		}
-	}()
+	}(srv.listener)
 
 	return nil
 }

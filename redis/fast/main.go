@@ -99,7 +99,7 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 func (srv *Server) Start() (e error) {
 	srv.Lock()
 	defer srv.Unlock()
-	srv.listener, e = lib.Listener(&srv.config)
+	srv.listener, e = lib.NewListener(srv.config)
 	if e != nil {
 		return e
 	}

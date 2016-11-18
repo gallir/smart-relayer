@@ -114,7 +114,7 @@ func (srv *Server) Start() (e error) {
 		return
 	}
 
-	srv.listener, e = lib.Listener(&srv.config)
+	srv.listener, e = lib.NewListener(srv.config)
 	if e != nil {
 		return e
 	}
