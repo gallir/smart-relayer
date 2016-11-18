@@ -216,23 +216,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			return
 		}
 		response.WriteTo(conn)
-
-		/*
-			select {
-			case response, more := <-responseCh:
-				if !more {
-					// The client has closed the channel
-					lib.Debugf("Redis client has closed channel, exiting")
-					return
-				}
-				response.WriteTo(conn)
-			case <-time.After(responseTimeout):
-				// Something very wrong happened in the client
-				log.Println("Timeout waiting a response, closing client connection")
-				respKO.WriteTo(conn)
-				return
-			}
-		*/
 	}
 }
 
