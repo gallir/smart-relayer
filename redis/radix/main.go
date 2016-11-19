@@ -93,9 +93,9 @@ func (srv *Server) Start() (e error) {
 				}
 				if srv.exiting {
 					log.Println("Exiting local listener", srv.config.ListenHost())
-				} else {
-					log.Println("Error in local listener, exiting", srv.config.ListenHost(), e)
+					return
 				}
+				log.Panicln("Emergency error in local listener", srv.config.ListenHost(), e)
 				return
 			}
 			go srv.handleConnection(netConn)
@@ -190,7 +190,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if ok {
 				e := client.Send(req)
 				if e != nil {
-					log.Println("Error sending request to redis client", srv.config.Host(), e)
+					// log.Println("Error sending", srv.config.Host(), e)
 					redis.NewResp(e).WriteTo(conn)
 					continue
 				}
@@ -204,7 +204,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 		e := client.Send(req)
 		if e != nil {
-			log.Println("Error sending request to redis client", srv.config.Host(), e)
+			// log.Println("Error sending", srv.config.Host(), e)
 			redis.NewResp(e).WriteTo(conn)
 			continue
 		}

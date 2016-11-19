@@ -4,7 +4,7 @@
 $value = randString(50000);
 
 $start = microtime(True);
-for ($i = 0; $i<1000; $i++) {
+for ($i = 0; $i<2000; $i++) {
     $cli = phpiredis_connect('/tmp/redis.sock');
     //$cli = phpiredis_connect('mamut.apsl.net', 6379);
     $key = randString(32);

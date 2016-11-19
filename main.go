@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	version = "4.0.1"
+	version = "4.0.2"
 )
 
 var (
@@ -82,9 +82,18 @@ func startOrReload() bool {
 }
 
 func main() {
+	// Force a high number of file descriptoir, if possible
+	var rLimit syscall.Rlimit
+	e := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	if e == nil {
+		rLimit.Cur = 65536
+		syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	}
 
+	// Show version and exit
 	if lib.GlobalConfig.ShowVersion {
 		fmt.Println("smart-relayer version", version)
+		fmt.Printf("Max files %d/%d\n", rLimit.Cur, rLimit.Max)
 		os.Exit(0)
 	}
 

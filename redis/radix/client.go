@@ -26,7 +26,7 @@ type Client struct {
 	queueChan          chan *Request // Requests sent to the Redis server, some pending of responses
 	lastConnectFailure time.Time
 	connectedAt        time.Time
-	failures           int
+	failures           int64
 	pipelined          int
 }
 
@@ -59,10 +59,11 @@ func (clt *Client) connect() bool {
 	defer clt.Unlock()
 
 	if clt.failures > 10 {
+		// The pool manager will see we are invalid and kill us
 		clt.ready = false
 		return false
 	}
-	if clt.lastConnectFailure.After(time.Now().Add(100 * time.Millisecond)) {
+	if clt.lastConnectFailure.Add(200 * time.Millisecond).After(time.Now()) {
 		// It failed too recently
 		return false
 	}
@@ -274,8 +275,20 @@ func (clt *Client) Send(req interface{}) (e error) {
 	}()
 
 	if clt.requestChan == nil {
-		lib.Debugf("Nil channel in send request")
+		lib.Debugf("Nil channel in send request %s", clt.config.Host())
 		return errKO
+	}
+
+	if !clt.ready {
+		lib.Debugf("Client not ready %s", clt.config.Host())
+		return errKO
+	}
+
+	if f := clt.failures; f > 0 {
+		if clt.lastConnectFailure.Add(connectTimeout).After(time.Now()) {
+			lib.Debugf("Client is failing to connect %s", clt.config.Host())
+			return errKO
+		}
 	}
 
 	if len(clt.requestChan) == requestBufferSize {
