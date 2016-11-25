@@ -95,7 +95,7 @@ func (srv *Server) Start() (e error) {
 					log.Println("Exiting local listener", srv.config.ListenHost())
 					return
 				}
-				log.Panicln("Emergency error in local listener", srv.config.ListenHost(), e)
+				log.Fatalln("Emergency error in local listener", srv.config.ListenHost(), e)
 				return
 			}
 			go srv.handleConnection(netConn)

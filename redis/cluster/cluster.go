@@ -135,9 +135,9 @@ func (srv *Server) Start() (e error) {
 				}
 				if srv.exiting {
 					log.Println("Exiting local listener", srv.config.ListenHost())
-				} else {
-					log.Println("Error in local listener, exiting", srv.config.ListenHost(), e)
+					return
 				}
+				log.Fatalln("Emergency error in local listener", srv.config.ListenHost(), e)
 				return
 			}
 			go Handle(srv, netConn)
