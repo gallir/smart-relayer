@@ -8,7 +8,8 @@ import (
 )
 
 const (
-	MinCompressSize = 256
+	MinCompressSize  = 256
+	CompressPageSize = 4096
 )
 
 var (
@@ -71,7 +72,7 @@ func Items(rs []*redis.Resp) (args []*redis.Resp, changed bool) {
 func Bytes(b []byte) []byte {
 	n := snappy.MaxEncodedLen(len(b)) + len(magicSnappy)
 	// Create the required slice once
-	buf := make([]byte, n)
+	buf := make([]byte, (n/CompressPageSize+1)*CompressPageSize)
 	copy(buf, magicSnappy)
 	c := snappy.Encode(buf[len(magicSnappy):], b)
 	return buf[:len(c)+len(magicSnappy)]

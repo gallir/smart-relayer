@@ -1,7 +1,6 @@
 package cluster
 
 import (
-	"bufio"
 	"log"
 	"net"
 	"strings"
@@ -27,7 +26,6 @@ type connHandler struct {
 	pQueue     seqRespHeap // Priority queue for the responses
 	srv        *Server
 	conn       net.Conn
-	buf        *bufio.ReadWriter
 	reqCh      chan *reqData
 	respCh     chan *redis.Resp
 	senders    int32
@@ -38,13 +36,12 @@ func Handle(srv *Server, netCon net.Conn) {
 	h := &connHandler{
 		srv:  srv,
 		conn: netCon,
-		buf:  bufio.NewReadWriter(bufio.NewReader(netCon), bufio.NewWriter(netCon)),
 	}
 	defer h.close()
 
 	h.init()
 
-	reader := redis.NewRespReader(h.buf)
+	reader := redis.NewRespReader(h.conn)
 	for {
 		err := netCon.SetReadDeadline(time.Now().Add(listenTimeout * time.Second))
 		if err != nil {
@@ -64,7 +61,6 @@ func Handle(srv *Server, netCon net.Conn) {
 			resp = compress.UResp(resp)
 		}
 		resp.WriteTo(h.conn)
-		h.buf.Flush()
 	}
 }
 
@@ -94,7 +90,6 @@ func (h *connHandler) close() {
 	if h.respCh != nil {
 		close(h.respCh)
 	}
-	h.buf.Flush()
 	h.conn.Close()
 
 }
