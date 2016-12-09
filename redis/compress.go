@@ -3,13 +3,13 @@ package compress
 import (
 	"bytes"
 
+	"github.com/gallir/radix.improved/redis"
 	"github.com/golang/snappy"
-	"github.com/mediocregopher/radix.v2/redis"
 )
 
 const (
 	MinCompressSize  = 256
-	CompressPageSize = 4096
+	CompressPageSize = 256
 )
 
 var (

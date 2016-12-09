@@ -3,8 +3,8 @@ package redis2
 import (
 	"strings"
 
+	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
-	"github.com/mediocregopher/radix.v2/redis"
 )
 
 const unknownDB = -1
