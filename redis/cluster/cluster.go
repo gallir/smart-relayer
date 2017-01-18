@@ -147,6 +147,14 @@ func (srv *Server) Start() (e error) {
 	return nil
 }
 
+// Status get stats of the current relayer
+func (srv *Server) Status() lib.RelayerStatus {
+	return lib.RelayerStatus{
+		Host:     srv.config.Host(),
+		Protocol: srv.config.Protocol,
+	}
+}
+
 func (srv *Server) reloadCluster(reset bool) error {
 	if srv.pool != nil {
 		p, ok := srv.pool.(*cluster.Cluster)

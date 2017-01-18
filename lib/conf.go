@@ -14,8 +14,9 @@ const (
 )
 
 type Config struct {
-	Comment string
-	Relayer []RelayerConfig
+	Comment        string
+	StatusListener string
+	Relayer        []RelayerConfig
 }
 
 type RelayerConfig struct {

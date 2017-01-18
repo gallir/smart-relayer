@@ -141,6 +141,14 @@ func (srv *Server) Exit() {
 	srv.done <- true
 }
 
+// Status get stats of the current relayer
+func (srv *Server) Status() lib.RelayerStatus {
+	return lib.RelayerStatus{
+		Host:     srv.config.Host(),
+		Protocol: srv.config.Protocol,
+	}
+}
+
 func (srv *Server) handleConnection(netCon net.Conn) {
 	defer netCon.Close()
 

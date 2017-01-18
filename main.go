@@ -18,6 +18,7 @@ const (
 )
 
 var (
+	statusListener = ":9091"
 	relayers       = make(map[string]lib.Relayer)
 	totalRelayers  = 0
 	relayersConfig *lib.Config
@@ -45,6 +46,8 @@ func startOrReload() bool {
 		log.Println("Bad configuration", err)
 		return false
 	}
+
+	statusListener = newConf.StatusListener
 
 	newEndpoints := make(map[string]bool)
 
@@ -122,6 +125,11 @@ func main() {
 				r.Exit()
 			}
 		}
+	}()
+
+	// Status
+	go func() {
+		runStatus()
 	}()
 
 	for i := 0; i < totalRelayers; i++ {
