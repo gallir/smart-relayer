@@ -1,4 +1,4 @@
-package redis
+package pool
 
 import (
 	"log"
@@ -14,36 +14,39 @@ const (
 )
 
 type elem struct {
-	id      int
-	counter int
-	client  *Client
+	ID      int
+	Counter int
+	Client  lib.RelayerClient
 }
 
+type CreateFunction func(*lib.RelayerConfig) lib.RelayerClient
+
 // Pool keep a list of clients' elements
-type pool struct {
+type Pool struct {
 	sync.Mutex
+	cf           CreateFunction
+	config       lib.RelayerConfig
 	clients      []*elem
 	free         []*elem
 	idle         []*elem
 	max, maxIdle int
-	server       *Server
 	lastNonFree  time.Time
 	lastIdle     time.Time
 }
 
 // New returns a new pool manager
-func newPool(server *Server, c *lib.RelayerConfig) (p *pool) {
-	p = &pool{
-		server: server,
+func New(c *lib.RelayerConfig, cf CreateFunction) (p *Pool) {
+	p = &Pool{
+		cf: cf,
 	}
-	p.readConfig(c)
+	p.ReadConfig(c)
 	p.clients = make([]*elem, 0, p.max)
 	p.free = make([]*elem, 0, p.max)
 	p.idle = make([]*elem, 0, p.max)
 	return
 }
 
-func (p *pool) readConfig(c *lib.RelayerConfig) {
+func (p *Pool) ReadConfig(c *lib.RelayerConfig) {
 	p.Lock()
 	defer p.Unlock()
 
@@ -61,37 +64,47 @@ func (p *pool) readConfig(c *lib.RelayerConfig) {
 		p.clients = p.clients[:p.max]
 	}
 
+	for _, e := range p.clients {
+		e.Client.Reload(c)
+	}
+
+	p.config = *c
+
 }
 
-func (p *pool) reset(c *lib.RelayerConfig) {
+func (p *Pool) Reset() {
+	p.Lock()
+	defer p.Unlock()
+
 	for _, e := range p.clients {
-		e.client.exit()
+		e.Client.Exit()
 	}
 	p.clients = nil
 	p.free = nil
 	p.idle = nil
 }
 
-func (p *pool) get() (e *elem, ok bool) {
+func (p *Pool) Get() (e *elem, ok bool) {
 	p.Lock()
 	defer p.Unlock()
 
 	e, ok = p._get()
 	if ok {
 		// Check the element is ok
-		if !e.client.isValid() {
+		if !e.Client.IsValid() {
+			e.Client.Exit()
 			// Replace it
-			i := e.id
+			i := e.ID
 			log.Printf("Error in client %d, replacing it", i)
-			e = p._createElem(e.id)
-			e.counter++
+			e = p._createElem(e.ID)
+			e.Counter++
 			p.clients[i] = e
 		}
 	}
 	return
 }
 
-func (p *pool) _get() (e *elem, ok bool) {
+func (p *Pool) _get() (e *elem, ok bool) {
 	e, ok = p._pickFree()
 	if ok {
 		return
@@ -105,38 +118,38 @@ func (p *pool) _get() (e *elem, ok bool) {
 
 	if l := len(p.clients); l < p.max {
 		e = p._createElem(l)
-		e.counter++
+		e.Counter++
 		return e, true
 	}
 
 	e, ok = p._pickNonFree()
 	if ok {
-		e.counter++
+		e.Counter++
 	}
 	return
 }
 
-func (p *pool) close(e *elem) {
+func (p *Pool) Close(e *elem) {
 	p.Lock()
 	defer p.Unlock()
 
-	e.counter--
+	e.Counter--
 
-	if e.id >= len(p.clients) {
-		lib.Debugf("Pool: exceeded limit, %d counter %d", e.id, e.counter)
-		if e.counter <= 0 && e.client != nil {
-			e.client.exit()
+	if e.ID >= len(p.clients) {
+		lib.Debugf("Pool: exceeded limit, %d counter %d", e.ID, e.Counter)
+		if e.Counter <= 0 && e.Client != nil {
+			e.Client.Exit()
 		}
 		return
 	}
 
-	if p.clients[e.id].client != e.client {
+	if p.clients[e.ID].Client != e.Client {
 		lib.Debugf("Pool: tried to close a non existing client")
 		return
 	}
 
-	if e.counter <= 0 {
-		e.counter = 0
+	if e.Counter <= 0 {
+		e.Counter = 0
 		now := time.Now()
 		timeLimit := now.Add(-minAddIdlePeriod)
 		if p.maxIdle > 0 && len(p.free) > p.maxIdle &&
@@ -144,56 +157,57 @@ func (p *pool) close(e *elem) {
 			p.lastIdle.Before(timeLimit) {
 			p.idle = append(p.idle, e)
 			p.lastIdle = now
-			lib.Debugf("Pool: added to idle %d counter %d", e.id, e.counter)
+			lib.Debugf("Pool: added to idle %d counter %d", e.ID, e.Counter)
 		} else {
-			// lib.Debugf("Pool: added to free %d counter %d", e.id, e.counter)
+			// lib.Debugf("Pool: added to free %d counter %d", e.ID, e.counter)
 			p.free = append(p.free, e)
 		}
 	}
 }
 
-func (p *pool) _createElem(id int) (e *elem) {
-	cl := newClient(p.server)
+func (p *Pool) _createElem(id int) (e *elem) {
+	//cl := p.server.NewClient()
+	cl := p.cf(&p.config)
 	e = &elem{
-		id:     id,
-		client: cl,
+		ID:     id,
+		Client: cl,
 	}
 	p.clients = append(p.clients, e)
-	lib.Debugf("Pool: created new client %d", e.id)
+	lib.Debugf("Pool: created new client %d", e.ID)
 	return
 }
 
-func (p *pool) _pickFree() (*elem, bool) {
+func (p *Pool) _pickFree() (*elem, bool) {
 	l := len(p.free)
 	if l == 0 {
 		return nil, false
 	}
 
 	e := p.free[l-1]
-	e.counter++
+	e.Counter++
 	p.free = p.free[:l-1]
 
 	return e, true
 }
 
-func (p *pool) _pickIdle() (e *elem, ok bool) {
+func (p *Pool) _pickIdle() (e *elem, ok bool) {
 	if l := len(p.idle); p.maxIdle > 0 && l > 0 {
 		// Select the last element added to idle
 		e = p.idle[l-1]
-		e.counter++
+		e.Counter++
 		p.idle = p.idle[:l-1]
 		ok = true
 	}
 	return
 }
 
-func (p *pool) _pickNonFree() (e *elem, ok bool) {
+func (p *Pool) _pickNonFree() (e *elem, ok bool) {
 	// Otherwise pick a random element from clients
 	elems := len(p.clients)
 	if elems > p.max {
 		elems = p.max
 	}
 	e = p.clients[rand.Intn(elems)]
-	e.counter++
+	e.Counter++
 	return e, true
 }

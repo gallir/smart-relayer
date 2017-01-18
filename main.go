@@ -1,13 +1,20 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/gallir/smart-relayer/lib"
-	"github.com/gallir/smart-relayer/redis"
+	"github.com/gallir/smart-relayer/redis/cluster"
+	"github.com/gallir/smart-relayer/redis/radix"
+)
+
+const (
+	version = "4.0.6"
 )
 
 var (
@@ -21,8 +28,12 @@ var (
 
 func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 	switch conf.Protocol {
-	case "redis":
-		srv, err = redis.New(conf, done)
+	case "redis", "redis2":
+		srv, err = redis2.New(conf, done)
+	case "redis-cluster", "redis-plus":
+		srv, err = cluster.New(conf, done)
+	default:
+		err = errors.New("no valid option")
 	}
 	return
 }
@@ -43,12 +54,14 @@ func startOrReload() bool {
 		if !ok {
 			// Start a new relayer
 			r, err := getNewServer(conf)
-			if err == nil {
-				lib.Debugf("Starting new relayer from %s to %s", r.Listen(), conf.Url)
-				totalRelayers++
-				if e := r.Start(); e == nil {
-					relayers[r.Listen()] = r
-				}
+			if err != nil {
+				log.Println("Error starting relayer", conf.Protocol, err)
+				continue
+			}
+			lib.Debugf("Starting new relayer from %s to %s", conf.Listen, conf.URL)
+			totalRelayers++
+			if e := r.Start(); e == nil {
+				relayers[conf.Listen] = r
 			}
 		} else {
 			// The relayer exists, reload it
@@ -69,6 +82,21 @@ func startOrReload() bool {
 }
 
 func main() {
+	// Force a high number of file descriptoir, if possible
+	var rLimit syscall.Rlimit
+	e := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	if e == nil {
+		rLimit.Cur = 65536
+		syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	}
+
+	// Show version and exit
+	if lib.GlobalConfig.ShowVersion {
+		fmt.Println("smart-relayer version", version)
+		fmt.Printf("Max files %d/%d\n", rLimit.Cur, rLimit.Max)
+		os.Exit(0)
+	}
+
 	if !startOrReload() {
 		os.Exit(1)
 	}
@@ -88,7 +116,8 @@ func main() {
 	// Exit
 	go func() {
 		for {
-			_ = <-exitSig
+			s := <-exitSig
+			log.Printf("Signal %d received, exiting", s)
 			for _, r := range relayers {
 				r.Exit()
 			}
