@@ -34,6 +34,6 @@ func getStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sb, _ := json.Marshal(s)
+	sb, _ := json.MarshalIndent(s, "", " ")
 	fmt.Fprintf(w, string(sb)) // send data to client side
 }

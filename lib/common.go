@@ -10,8 +10,15 @@ type Relayer interface {
 }
 
 type RelayerStatus struct {
+	Listen   string
 	Host     string
 	Protocol string
+	Sync     int64
+	Async    int64
+	Errors   int64
+	Idle     int
+	Free     int
+	Clients  int
 }
 
 type RelayerClient interface {
