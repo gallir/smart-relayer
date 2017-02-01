@@ -13,9 +13,9 @@ type RelayerStatus struct {
 	Listen   string
 	Host     string
 	Protocol string
-	Sync     int64
-	Async    int64
-	Errors   int64
+	Sync     uint64
+	Async    uint64
+	Errors   uint64
 	Idle     int
 	Free     int
 	Clients  int

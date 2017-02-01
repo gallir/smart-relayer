@@ -100,6 +100,9 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Run http server for stats
+	go runStatus()
+
 	if !startOrReload() {
 		os.Exit(1)
 	}
@@ -125,11 +128,6 @@ func main() {
 				r.Exit()
 			}
 		}
-	}()
-
-	// Status
-	go func() {
-		runStatus()
 	}()
 
 	for i := 0; i < totalRelayers; i++ {

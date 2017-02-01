@@ -15,6 +15,8 @@ type statusResponse struct {
 }
 
 func runStatus() {
+	log.Println("Starting status server", statusListener)
+
 	http.HandleFunc("/", getStatus)                 // set router
 	err := http.ListenAndServe(statusListener, nil) // set listen port
 	if err != nil {

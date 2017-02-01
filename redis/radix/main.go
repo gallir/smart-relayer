@@ -22,9 +22,9 @@ type Server struct {
 	done       chan bool
 	exiting    bool
 	listener   net.Listener
-	statAsync  int64
-	statSync   int64
-	statErrors int64
+	statAsync  uint64
+	statSync   uint64
+	statErrors uint64
 }
 
 const (
@@ -142,6 +142,9 @@ func (srv *Server) Exit() {
 	if srv.listener != nil {
 		srv.listener.Close()
 	}
+	srv.statAsync = 0
+	srv.statSync = 0
+	srv.statErrors = 0
 	srv.done <- true
 }
 
@@ -171,7 +174,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	pooled, ok := srv.pool.Get()
 	if !ok {
 		log.Println("Redis server, no clients available from pool")
-		atomic.AddInt64(&srv.statErrors, 1)
+		atomic.AddUint64(&srv.statErrors, 1)
 		return
 	}
 	defer srv.pool.Close(pooled)
@@ -188,7 +191,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if redis.IsTimeout(r) {
 				// Paranoid, don't close it just log it
 				log.Println("Local client listen timeout at", srv.config.Listen)
-				atomic.AddInt64(&srv.statErrors, 1)
+				atomic.AddUint64(&srv.statErrors, 1)
 				continue
 			}
 			// Connection was closed
@@ -214,11 +217,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				if e != nil {
 					// log.Println("Error sending", srv.config.Host(), e)
 					redis.NewResp(e).WriteTo(conn)
-					atomic.AddInt64(&srv.statErrors, 1)
+					atomic.AddUint64(&srv.statErrors, 1)
 					continue
 				}
 				fastResponse.WriteTo(conn)
-				atomic.AddInt64(&srv.statAsync, 1)
+				atomic.AddUint64(&srv.statAsync, 1)
 				continue
 			}
 		}
@@ -230,7 +233,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if e != nil {
 			// log.Println("Error sending", srv.config.Host(), e)
 			redis.NewResp(e).WriteTo(conn)
-			atomic.AddInt64(&srv.statErrors, 1)
+			atomic.AddUint64(&srv.statErrors, 1)
 			continue
 		}
 
@@ -238,11 +241,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if !more {
 			// The client has closed the channel
 			lib.Debugf("Redis client has closed channel, exiting")
-			atomic.AddInt64(&srv.statErrors, 1)
+			atomic.AddUint64(&srv.statErrors, 1)
 			return
 		}
 		response.WriteTo(conn)
-		atomic.AddInt64(&srv.statSync, 1)
+		atomic.AddUint64(&srv.statSync, 1)
 	}
 }
 

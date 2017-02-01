@@ -97,13 +97,13 @@ func (h *connHandler) close() {
 func (h *connHandler) process(m *redis.Resp) *redis.Resp {
 	ms, err := m.Array()
 	if err != nil || len(ms) < 1 {
-		atomic.AddInt64(&h.srv.statErrors, 1)
+		atomic.AddUint64(&h.srv.statErrors, 1)
 		return respBadCommand
 	}
 
 	cmd, err := ms[0].Str()
 	if err != nil || strings.ToUpper(cmd) == selectCommand {
-		atomic.AddInt64(&h.srv.statErrors, 1)
+		atomic.AddUint64(&h.srv.statErrors, 1)
 		return respBadCommand
 	}
 
@@ -123,21 +123,21 @@ func (h *connHandler) process(m *redis.Resp) *redis.Resp {
 
 	if doAsync {
 		h.reqCh <- data
-		atomic.AddInt64(&h.srv.statAsync, 1)
+		atomic.AddUint64(&h.srv.statAsync, 1)
 		return fastResponse
 	}
 
 	data.answerCh = h.respCh
 	h.reqCh <- data
-	atomic.AddInt64(&h.srv.statSync, 1)
+	atomic.AddUint64(&h.srv.statSync, 1)
 	return <-h.respCh
 }
 
 func (h *connHandler) sender() {
 	atomic.AddInt32(&h.senders, 1)
-	atomic.AddInt64(&h.srv.statClients, 1)
+	atomic.AddInt32(&h.srv.statClients, 1)
 	defer atomic.AddInt32(&h.senders, -1)
-	defer atomic.AddInt64(&h.srv.statClients, -1)
+	defer atomic.AddInt32(&h.srv.statClients, -1)
 
 	for m := range h.reqCh {
 		// Add senders if there are pending requests
