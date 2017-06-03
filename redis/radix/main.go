@@ -186,7 +186,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 		// Smart mode, answer immediately and forget
 		if srv.mode == lib.ModeSmart {
-			fastResponse, ok := commands[string(req.command)]
+			fastResponse, ok := commands[req.command]
 			if ok {
 				e := client.Send(req)
 				if e != nil {
