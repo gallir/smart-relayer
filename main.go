@@ -18,6 +18,7 @@ const (
 )
 
 var (
+	statusListener = ":9091"
 	relayers       = make(map[string]lib.Relayer)
 	totalRelayers  = 0
 	relayersConfig *lib.Config
@@ -45,6 +46,8 @@ func startOrReload() bool {
 		log.Println("Bad configuration", err)
 		return false
 	}
+
+	statusListener = newConf.StatusListener
 
 	newEndpoints := make(map[string]bool)
 
@@ -98,6 +101,9 @@ func main() {
 		fmt.Printf("Max files %d/%d\n", rLimit.Cur, rLimit.Max)
 		os.Exit(0)
 	}
+
+	// Run http server for stats
+	go runStatus()
 
 	if !startOrReload() {
 		os.Exit(1)

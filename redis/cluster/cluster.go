@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"time"
 
@@ -19,12 +20,16 @@ import (
 // Server is the thread that listen for clients' connections
 type Server struct {
 	sync.Mutex
-	config   lib.RelayerConfig
-	mode     int
-	done     chan bool
-	exiting  bool
-	listener net.Listener
-	pool     util.Cmder
+	config      lib.RelayerConfig
+	mode        int
+	done        chan bool
+	exiting     bool
+	listener    net.Listener
+	pool        util.Cmder
+	statAsync   uint64
+	statSync    uint64
+	statErrors  uint64
+	statClients int32
 }
 
 type reqData struct {
@@ -147,10 +152,25 @@ func (srv *Server) Start() (e error) {
 	return nil
 }
 
+// Status get stats of the current relayer
+func (srv *Server) Status() lib.RelayerStatus {
+
+	return lib.RelayerStatus{
+		Listen:   srv.config.Listen,
+		Host:     srv.config.Host(),
+		Protocol: srv.config.Protocol,
+		Sync:     srv.statSync,
+		Async:    srv.statAsync,
+		Errors:   srv.statErrors,
+		Clients:  int(srv.statClients),
+	}
+}
+
 func (srv *Server) reloadCluster(reset bool) error {
 	if srv.pool != nil {
 		p, ok := srv.pool.(*cluster.Cluster)
 		if !ok {
+			atomic.AddUint64(&srv.statErrors, 1)
 			return errors.New("Relod cluster failed, bad type")
 		}
 
@@ -184,12 +204,14 @@ func (srv *Server) reloadCluster(reset bool) error {
 		}); err != nil {
 			log.Printf("Error in cluster %s: %s", addr, err)
 			srv.pool = nil
+			atomic.AddUint64(&srv.statErrors, 1)
 			continue
 		}
 		lib.Debugf("Cluster linked to %s", addr)
 		return nil
 	}
 	srv.pool = nil
+	atomic.AddUint64(&srv.statErrors, 1)
 	return errors.New("no available redis cluster nodes")
 }
 
@@ -198,6 +220,7 @@ func (srv *Server) reloadPool(reset bool) error {
 	if srv.pool != nil {
 		p, ok := srv.pool.(*pool.Pool)
 		if !ok {
+			atomic.AddUint64(&srv.statErrors, 1)
 			return errors.New("Reload pool failed, bad type")
 		}
 		if !reset {
@@ -212,6 +235,7 @@ func (srv *Server) reloadPool(reset bool) error {
 	srv.pool, err = pool.New("tcp", srv.config.Host(), srv.config.MaxIdleConnections)
 	if err != nil {
 		srv.pool = nil
+		atomic.AddUint64(&srv.statErrors, 1)
 		return errors.New("connection error")
 	}
 

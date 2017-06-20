@@ -5,7 +5,20 @@ import "flag"
 type Relayer interface {
 	Start() error
 	Reload(*RelayerConfig) error
+	Status() RelayerStatus
 	Exit()
+}
+
+type RelayerStatus struct {
+	Listen   string
+	Host     string
+	Protocol string
+	Sync     uint64
+	Async    uint64
+	Errors   uint64
+	Idle     int
+	Free     int
+	Clients  int
 }
 
 type RelayerClient interface {

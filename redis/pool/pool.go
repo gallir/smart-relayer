@@ -72,6 +72,18 @@ func (p *Pool) ReadConfig(c *lib.RelayerConfig) {
 
 }
 
+func (p *Pool) GetCountIdle() int {
+	return len(p.idle)
+}
+
+func (p *Pool) GetCountFree() int {
+	return len(p.free)
+}
+
+func (p *Pool) GetCountClients() int {
+	return len(p.clients)
+}
+
 func (p *Pool) Reset() {
 	p.Lock()
 	defer p.Unlock()
