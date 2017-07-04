@@ -79,7 +79,7 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 
 	err := srv.Reload(&c)
 	if err != nil {
-		log.Println("no available redis cluster nodes", srv.config.URL)
+		log.Fatalln("no available redis cluster nodes", srv.config.URL)
 		return nil, err
 	}
 
