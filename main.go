@@ -4,9 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/syslog"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"sync"
 
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/cluster"
@@ -14,10 +17,11 @@ import (
 )
 
 const (
-	version = "5.0.1"
+	version = "5.0.2"
 )
 
 var (
+	mutex          sync.Mutex
 	relayers       = make(map[string]lib.Relayer)
 	totalRelayers  = 0
 	relayersConfig *lib.Config
@@ -39,6 +43,9 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 }
 
 func startOrReload() bool {
+	mutex.Lock()
+	defer mutex.Unlock()
+
 	// Check config is OK
 	newConf, err := lib.ReadConfig(lib.GlobalConfig.ConfigFileName)
 	if err != nil {
@@ -99,8 +106,12 @@ func main() {
 		os.Exit(0)
 	}
 
-	if !startOrReload() {
-		os.Exit(1)
+	if !lib.GlobalConfig.Debug {
+		logwriter, e := syslog.New(syslog.LOG_INFO|syslog.LOG_USER, "smart-relayer")
+		if e == nil {
+			log.SetFlags(0)
+			log.SetOutput(logwriter)
+		}
 	}
 
 	// Listen for reload signals
@@ -125,6 +136,10 @@ func main() {
 			}
 		}
 	}()
+
+	if !startOrReload() {
+		os.Exit(1)
+	}
 
 	for i := 0; i < totalRelayers; i++ {
 		<-done
