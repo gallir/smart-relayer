@@ -1,12 +1,10 @@
 package cluster
 
 import (
-	"log"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"container/heap"
 
@@ -43,16 +41,11 @@ func Handle(srv *Server, netCon net.Conn) {
 
 	reader := redis.NewRespReader(h.conn)
 	for {
-		err := netCon.SetReadDeadline(time.Now().Add(listenTimeout * time.Second))
-		if err != nil {
-			log.Printf("error setting read deadline: %s", err)
-			return
-		}
-
 		req := reader.Read()
-		if redis.IsTimeout(req) {
-			continue
-		} else if req.IsType(redis.IOErr) {
+		if req.IsType(redis.IOErr) {
+			if redis.IsTimeout(req) {
+				continue
+			}
 			return
 		}
 

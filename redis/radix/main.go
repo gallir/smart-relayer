@@ -145,10 +145,7 @@ func (srv *Server) Exit() {
 func (srv *Server) handleConnection(netCon net.Conn) {
 	defer netCon.Close()
 
-	conn := lib.NewNetReadWriter(netCon, listenTimeout, 0)
-	defer conn.Flush()
-
-	reader := redis.NewRespReader(conn)
+	reader := redis.NewRespReader(netCon)
 	pooled, ok := srv.pool.Get()
 	if !ok {
 		log.Println("Redis server, no clients available from pool")
@@ -162,7 +159,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	currentDB := 0
 
 	for {
-		conn.Flush()
 		r := reader.Read()
 		if r.IsType(redis.IOErr) {
 			if redis.IsTimeout(r) {
@@ -176,7 +172,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 		req := newRequest(r, &srv.config)
 		if req == nil {
-			respBadCommand.WriteTo(conn)
+			respBadCommand.WriteTo(netCon)
 			continue
 		}
 
@@ -192,10 +188,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				e := client.Send(req)
 				if e != nil {
 					// log.Println("Error sending", srv.config.Host(), e)
-					redis.NewResp(e).WriteTo(conn)
+					redis.NewResp(e).WriteTo(netCon)
 					continue
 				}
-				fastResponse.WriteTo(conn)
+				fastResponse.WriteTo(netCon)
 				continue
 			}
 		}
@@ -206,7 +202,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		e := client.Send(req)
 		if e != nil {
 			// log.Println("Error sending", srv.config.Host(), e)
-			redis.NewResp(e).WriteTo(conn)
+			redis.NewResp(e).WriteTo(netCon)
 			continue
 		}
 
@@ -216,7 +212,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			lib.Debugf("Redis client has closed channel, exiting")
 			return
 		}
-		response.WriteTo(conn)
+		response.WriteTo(netCon)
 	}
 }
 

@@ -37,7 +37,6 @@ type reqData struct {
 }
 
 const (
-	listenTimeout = 15
 	selectCommand = "SELECT"
 )
 
