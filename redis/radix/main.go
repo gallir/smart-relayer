@@ -55,6 +55,7 @@ func init() {
 		"SELECT":    respOK,
 		"HSET":      respTrue,
 		"SADD":      respTrue,
+		"ZADD":      respTrue,
 		"EXPIRE":    respTrue,
 		"EXPIREAT":  respTrue,
 		"PEXPIRE":   respTrue,
