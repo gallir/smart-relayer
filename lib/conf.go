@@ -19,9 +19,9 @@ type Config struct {
 }
 
 type RelayerConfig struct {
-	Protocol           string // redis | redis2 | redis-cluster | redis-plus
+	Protocol           string // redis | redis2 | redis-cluster | redis-plus | firehose
 	Mode               string // smart | sync
-	Listen             string // Local url
+	Listen             string // Local url | also is streamName for Kinesis Firehose
 	URL                string // Redis server url
 	MaxConnections     int    // Pool management
 	MaxIdleConnections int    // Pool managemente
@@ -30,6 +30,12 @@ type RelayerConfig struct {
 	Parallel           bool // For redis-cluster, send parallel requests
 	Pipeline           int  // If > 0 it does pipelining (buffering)
 	Timeout            int  // Timeout in seconds to wait for responses from the server
+
+	MaxRecords int     // To send in batch to Kinesis
+	StreamName string  // Kinesis/Firehose stream name
+	Region     string  // AWS region
+	Profile    string  // AWS Profile name
+	Spin       float64 // % of ignored messages
 }
 
 func ReadConfig(filename string) (config *Config, err error) {
