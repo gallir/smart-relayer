@@ -1,6 +1,7 @@
 package fh
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -8,16 +9,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/firehose"
 	"github.com/gallir/smart-relayer/lib"
 )
 
 const (
 	recordsTimeout = 1 * time.Second
-	connectRetry   = 5 * time.Second
-	maxFailures    = 5
-	windowFailures = 10 * time.Second
 )
 
 var (
@@ -27,62 +24,57 @@ var (
 // Client is the thread that connect to the remote redis server
 type Client struct {
 	sync.Mutex
-	config    lib.RelayerConfig
-	mode      int
-	awsSess   *session.Session
-	awsSvc    *firehose.Firehose
-	records   []record
-	recordsCh chan record
-
-	exiting     bool
-	finish      chan bool
-	done        chan bool
-	lastFailure time.Time
-	failures    int
-	ID          int
+	srv     *Server
+	mode    int
+	records []record
+	status  int
+	finish  chan bool
+	done    chan bool
+	ID      int
 }
 
 // NewClient creates a new client that connect to a Redis server
-func NewClient(c *lib.RelayerConfig, ch chan record) *Client {
+func NewClient(srv *Server) *Client {
 	n := atomic.AddInt64(&clientCount, 1)
 
 	clt := &Client{
-		done:      make(chan bool),
-		finish:    make(chan bool),
-		exiting:   false,
-		recordsCh: ch,
-		ID:        int(n),
+		done:   make(chan bool),
+		finish: make(chan bool),
+		status: 0,
+		srv:    srv,
+		ID:     int(n),
 	}
 
-	if err := clt.Reload(c); err != nil {
+	if err := clt.Reload(); err != nil {
 		clt.log("Error on reload firehose client:", err)
 		return nil
 	}
 
-	clt.debug("Client %s for target %s ready", clt.config.Listen, clt.config.Host())
+	clt.debug("Firehose client ready")
 
 	return clt
 }
 
 func (clt *Client) listen() {
 	defer clt.debug("[%d] Closed listener", clt.ID)
+	clt.status = 1
 
 	for {
 		select {
-		case r := <-clt.recordsCh:
+		case r := <-clt.srv.recordsCh:
 			// ignore empty messages
 			if r.Len() <= 0 {
 				continue
 			}
 
 			clt.records = append(clt.records, r)
-			if len(clt.records) >= clt.config.MaxRecords {
+			if len(clt.records) >= clt.srv.config.MaxRecords {
 				clt.flush()
 			}
 		case <-time.Tick(recordsTimeout):
 			clt.flush()
 		case <-clt.done:
-			clt.debug("[%d] Closing listener", clt.ID)
+			clt.debug("Closing listener %d", clt.ID)
 			clt.finish <- true
 			return
 		}
@@ -90,97 +82,30 @@ func (clt *Client) listen() {
 
 }
 
-func (clt *Client) Reload(c *lib.RelayerConfig) error {
+func (clt *Client) Reload() error {
 	clt.Lock()
 	defer clt.Unlock()
 
-	clt.config = *c
-
-	var err error
-
-	if clt.config.Profile != "" {
-		clt.awsSess, err = session.NewSessionWithOptions(session.Options{Profile: clt.config.Profile})
-	} else {
-		clt.awsSess, err = session.NewSession()
+	if clt.status > 0 {
+		clt.Exit()
 	}
-
-	if err != nil {
-		clt.log("Error session: %s", err)
-		clt.failure()
-		return err
-	}
-
-	clt.awsSvc = firehose.New(clt.awsSess, &aws.Config{Region: aws.String(clt.config.Region)})
-
-	stream := &firehose.DescribeDeliveryStreamInput{
-		DeliveryStreamName: &clt.config.StreamName,
-	}
-
-	l, err := clt.awsSvc.DescribeDeliveryStream(stream)
-	if err != nil {
-		clt.log("ERROR connecting to kinesis/firehost: %s", err)
-		clt.failure()
-		return err
-	}
-
-	clt.debug("Connected to kinesis/firehost deliver to %s (%s) status %s",
-		*l.DeliveryStreamDescription.DeliveryStreamName,
-		*l.DeliveryStreamDescription.DeliveryStreamARN,
-		*l.DeliveryStreamDescription.DeliveryStreamStatus)
-
-	clt.exiting = false
-	clt.failures = 0
 
 	go clt.listen()
 
 	return nil
 }
 
-func (clt *Client) failure() {
-
-	if time.Now().Sub(clt.lastFailure) > windowFailures {
-		clt.debug("reset failures %s : %s -> %s", time.Now(), time.Now().Sub(clt.lastFailure), clt.lastFailure)
-		clt.failures = 0
-	}
-
-	clt.failures++
-	clt.lastFailure = time.Now()
-
-	if clt.failures >= maxFailures {
-		clt.debug("Over failures limit")
-		go func() {
-			clt.Exit()
-			<-time.After(time.Second * 2)
-			clt.Reload(&clt.config)
-		}()
-		return
-	}
-
-}
-
 func (clt *Client) Exit() {
+	clt.debug("exiting..")
 
-	if clt.exiting {
-		log.Println("Duplicate call to Exit")
-		return
-	}
-
-	clt.debug("Exit")
-
-	clt.exiting = true
-
-	clt.debug("Done")
 	clt.done <- true
-	clt.debug("Finish")
+
+	clt.debug("exiting.. chan1")
 	<-clt.finish
-	clt.debug("End")
+	clt.debug("exiting.. chan2")
 
-	// send messages to firehose just if the connection is fine
-	if clt.failures > maxFailures {
-		clt.flush()
-	}
-
-	clt.debug("Exit Firehose client")
+	clt.debug("Exit Firehose client, pending records %d", len(clt.records))
+	clt.flush()
 }
 
 func (clt *Client) flush() {
@@ -194,27 +119,31 @@ func (clt *Client) flush() {
 		putRecord(r)
 	}
 
-	clt.records = nil
-
-	pr := &firehose.PutRecordBatchInput{
-		DeliveryStreamName: aws.String(clt.config.StreamName),
+	req, resp := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
+		DeliveryStreamName: aws.String(clt.srv.config.StreamName),
 		Records:            records,
-	}
+	})
 
-	o, errPut := clt.awsSvc.PutRecordBatch(pr)
+	ctx := context.Background()
+	var cancelFn func()
+	ctx, cancelFn = context.WithTimeout(ctx, 2*time.Second)
+	defer cancelFn()
+
+	req.SetContext(ctx)
+
+	errPut := req.Send()
 	if errPut != nil {
 		clt.log("Error PutRecordBatch: %s", errPut)
-		clt.failure()
+		clt.srv.failure()
 		return
 	}
 
-	if *o.FailedPutCount > 0 {
-		clt.log("ERROR: Failed %d records", *o.FailedPutCount)
-		clt.failure()
-		return
+	if *resp.FailedPutCount > 0 {
+		clt.log("ERROR: Failed %d records", *resp.FailedPutCount)
 	}
 
-	clt.debug("Records sent: %d", len(o.RequestResponses))
+	clt.records = nil
+	clt.debug("Records sent: %d", len(resp.RequestResponses))
 }
 
 func (clt *Client) debug(format string, v ...interface{}) {

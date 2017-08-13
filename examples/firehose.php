@@ -1,10 +1,13 @@
 <?PHP
 
+$limit = intval($argv[1]);
+if ($limit < 1) {
+    $limit = 1;
+} 
 
 $start = microtime(True);
-for ($i = 0; $i<10; $i++) {
+for ($i = 1; $i<=$limit; $i++) {
     $cli = phpiredis_connect('/tmp/redis.sock');
-    //$cli = phpiredis_connect('mamut.apsl.net', 6379);
 
     $response = phpiredis_command_bs($cli, array("PING"));
     if ($response != "PONG" && $response != "OK") {
