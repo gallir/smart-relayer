@@ -10,8 +10,8 @@ import (
 
 type record struct {
 	types     int
-	Timestamp time.Time              `json:"_ts"`
-	Rows      map[string]interface{} `json:"rows"`
+	Timestamp float64                `json:"_ts"`
+	Data      map[string]interface{} `json:"data"`
 	bytes     []byte                 // 0 json, 1 raw bytes
 }
 
@@ -23,10 +23,10 @@ var reqPool = sync.Pool{
 
 func newRecord() record {
 	r := reqPool.Get().(record)
-	r.Timestamp = time.Now()
-	r.Rows = make(map[string]interface{})
+	r.Timestamp = float64(time.Now().UnixNano()) / float64(time.Nanosecond)
 	r.bytes = nil
 	r.types = 0
+	r.Data = make(map[string]interface{})
 	return r
 }
 
@@ -35,48 +35,46 @@ func putRecord(r record) {
 }
 
 func (r *record) add(key, value string) {
-	if _, ok := r.Rows[key]; !ok {
-		r.Rows[key] = value
+	if _, ok := r.Data[key]; !ok {
+		r.Data[key] = value
 	}
 }
 
 func (r *record) sadd(key, value string) {
-
-	if _, ok := r.Rows[key]; !ok {
-		r.Rows[key] = make([]interface{}, 0)
+	if _, ok := r.Data[key]; !ok {
+		r.Data[key] = make([]interface{}, 0)
 	}
 
-	r.Rows[key] = append(r.Rows[key].([]interface{}), value)
+	r.Data[key] = append(r.Data[key].([]interface{}), value)
 }
 
 func (r *record) mhset(key string, k string, v interface{}) {
-
-	if _, ok := r.Rows[key]; !ok {
-		r.Rows[key] = make(map[string]interface{})
+	if _, ok := r.Data[key]; !ok {
+		r.Data[key] = make(map[string]interface{})
 	}
 
-	r.Rows[key].(map[string]interface{})[k] = v
+	r.Data[key].(map[string]interface{})[k] = v
 }
 
 func (r *record) Bytes() []byte {
-	if r.types == 0 {
-		buf, err := ffjson.Marshal(r)
-		if err != nil {
-			log.Panic(err)
-		}
-
-		ffjson.Pool(buf)
-
-		return buf
+	if r.types != 0 {
+		return r.bytes
 	}
 
-	return r.bytes
+	buf, err := ffjson.Marshal(r)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	ffjson.Pool(buf)
+
+	return buf
 }
 
 func (r *record) Len() int {
-	if r.types == 0 {
-		return len(r.Rows)
+	if r.types != 0 {
+		return len(r.bytes)
 	}
 
-	return len(r.bytes)
+	return len(r.Data)
 }

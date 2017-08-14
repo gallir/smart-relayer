@@ -1,9 +1,25 @@
 <?PHP
 
+
+
+for ($sadd = 0; $sadd <= (int) 15; $sadd++) { 
+    $array1[] = randString(20, "1233");
+}
+
+for ($sadd = 0; $sadd <= (int) 15; $sadd++) { 
+    $hash1[ randString(3,"0ABC") ] = randString(20, '9876 .€$#`'."\n");
+}
+
+
 $limit = intval($argv[1]);
 if ($limit < 1) {
     $limit = 1;
-} 
+}
+
+$case = 1;
+if (isset($argv[2]) && $argv[2] == "json") {
+    $case = 2;
+}
 
 $start = microtime(True);
 for ($i = 1; $i<=$limit; $i++) {
@@ -25,73 +41,70 @@ for ($i = 1; $i<=$limit; $i++) {
     // }
 
 
-    // /**
-    //  * RAW
-    //  */
-    // $response = phpiredis_command_bs($cli, array("RAWSET", json_encode(array("test"=>"raw json"))));
-    // if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-    //     printf("Error in HMSET %s\n", $response);
-    //     exit(1);
-    // }
 
-
-    /**
-     * Transaction - START
-     */
-    $response = phpiredis_command_bs($cli, array("MULTI"));
-    if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-        printf("Error in HMSET %s\n", $response);
-        exit(1);
-    }
-    //---------------------------
-
-
-    // SADD
-    $key = randString(5);
-    for ($sadd = 0; $sadd <= (int) rand(2,100); $sadd++) { 
-        $value = randString(10, "111");
-        $response = phpiredis_command_bs($cli, array("SADD", $key, $value));
+    if ($case == 1) {
+        /**
+        * Transaction - START
+        */
+        $response = phpiredis_command_bs($cli, array("MULTI"));
         if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-            printf("Error in SADD %s\n", $response);
+            printf("Error in HMSET %s\n", $response);
+            exit(1);
+        }
+        //---------------------------
+
+
+        // SADD
+        $key = "array1";
+        foreach($array1 as $value) {
+            $response = phpiredis_command_bs($cli, array("SADD", $key, $value));
+            if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
+                printf("Error in SADD %s\n", $response);
+                exit(1);
+            }
+        }
+
+
+        /**
+        * HMSET
+        */
+        $key = "hash1";
+        foreach ($hash1 as $k => $v) {
+            $_command = array("HMSET", $key, $k, $v);
+            $response = phpiredis_command_bs($cli,  $_command);
+        }
+        if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
+            printf("Error in HMSET %s\n", $response);
+            exit(1);
+        }
+
+
+        //---------------------------
+        $response = phpiredis_command_bs($cli, array("EXEC"));
+        if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
+            printf("Error in HMSET %s\n", $response);
+            exit(1);
+        }
+
+    } else {
+
+        /**
+        * RAW
+        */
+        $data = array(
+            "array1" => $array1,
+            "hash1" => $hash1,
+        );
+
+        $json = json_encode(array('_ts'=>microtime(true), 'data'=>$data), JSON_UNESCAPED_UNICODE | JSON_HEX_QUOT | JSON_HEX_APOS | JSON_HEX_TAG | JSON_UNESCAPED_UNICODE);
+        var_dump($json);
+
+        $response = phpiredis_command_bs($cli, array("RAWSET", $json));
+        if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
+            printf("Error in HMSET %s\n", $response);
             exit(1);
         }
     }
-
-
-    /**
-     * HMSET
-     */
-    for ($sadd = 0; $sadd <= (int) rand(2,100); $sadd++) { 
-        $keys[ randString(3,"0ABC") ] = randString((int) rand(7,10), '1234567890 .$€#@'."\n");
-    }
-
-    $_command = array("HMSET", "HMSETKEY");
-    $_keys = array_map(
-        function ($v, $k) { global $_command;  $_command[] = $k; $_command[] = $v; return $_command; },
-        $keys,
-        array_keys($keys)
-    );
-
-    $response = phpiredis_command_bs($cli,  $_command);
-    if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-        printf("Error in HMSET %s\n", $response);
-        exit(1);
-    }
-
-
-    //---------------------------
-    $response = phpiredis_command_bs($cli, array("EXEC"));
-    if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-        printf("Error in HMSET %s\n", $response);
-        exit(1);
-    }
-    /**
-     * Transaction - END
-     */
-
-
-    //sleep(1);
-    //usleep(rand(0,1));
 
 }
 $elapsed = microtime(True)-$start;

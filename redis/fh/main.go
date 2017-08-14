@@ -32,9 +32,8 @@ type Server struct {
 }
 
 const (
-	selectCommand     = "SELECT"
 	maxConnections    = 2
-	requestBufferSize = 200
+	requestBufferSize = 5000
 	connectionRetry   = 5 * time.Second
 	errorWindow       = 10 * time.Second
 )
@@ -254,7 +253,7 @@ func (srv *Server) sendRecord(r record) {
 	select {
 	case srv.recordsCh <- r:
 	default:
-		//log.Printf("ERROR: main channel is full. Queued messages %d", len(srv.recordsCh))
+		log.Printf("ERROR: main channel is full. Queued messages %d", len(srv.recordsCh))
 	}
 }
 
@@ -295,19 +294,26 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			return
 		}
 
-		req := newRequest(r, &srv.config)
+		req := lib.NewRequest(r, &srv.config)
 		if req == nil {
 			respBadCommand.WriteTo(netCon)
 			continue
 		}
 
-		fastResponse, ok := commands[req.command]
+		fastResponse, ok := commands[req.Command]
 		if !ok {
 			respBadCommand.WriteTo(netCon)
 			continue
 		}
 
-		switch req.command {
+		switch req.Command {
+		case "RAWSET":
+			if multi || len(req.Items) > 2 {
+				respKO.WriteTo(netCon)
+				continue
+			}
+			b, _ := req.Items[1].Bytes()
+			srv.sendBytes(b)
 		case "PING":
 		case "MULTI":
 			multi = true
@@ -315,16 +321,9 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		case "EXEC":
 			multi = false
 			srv.sendRecord(record)
-		case "RAWSET":
-			if multi || len(req.items) > 2 {
-				respKO.WriteTo(netCon)
-				continue
-			}
-			b, _ := req.items[1].Bytes()
-			srv.sendBytes(b)
 		case "SET":
-			k, _ := req.items[1].Str()
-			v, _ := req.items[2].Str()
+			k, _ := req.Items[1].Str()
+			v, _ := req.Items[2].Str()
 			if multi {
 				record.add(k, v)
 			} else {
@@ -333,8 +332,8 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				srv.sendRecord(record)
 			}
 		case "SADD":
-			k, _ := req.items[1].Str()
-			v, _ := req.items[2].Str()
+			k, _ := req.Items[1].Str()
+			v, _ := req.Items[2].Str()
 			if multi {
 				record.sadd(k, v)
 			} else {
@@ -351,7 +350,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				record = newRecord()
 			}
 
-			for i, o := range req.items {
+			for i, o := range req.Items {
 				if i == 0 {
 					continue
 				}
