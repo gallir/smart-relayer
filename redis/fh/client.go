@@ -110,7 +110,8 @@ func (clt *Client) flush() {
 
 	records := make([]*firehose.Record, 0, len(clt.records))
 	for _, r := range clt.records {
-		records = append(records, &firehose.Record{Data: r.Bytes()})
+		b := append(r.Bytes(), []byte("\n")...)
+		records = append(records, &firehose.Record{Data: b})
 	}
 
 	req, resp := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
