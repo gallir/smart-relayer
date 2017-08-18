@@ -21,6 +21,7 @@ type Server struct {
 	done     chan bool
 	exiting  bool
 	reseting bool
+	failing  bool
 	listener net.Listener
 
 	clients        []*Client
@@ -32,10 +33,13 @@ type Server struct {
 }
 
 const (
-	maxConnections    = 2
-	requestBufferSize = 5000
-	connectionRetry   = 5 * time.Second
-	errorWindow       = 10 * time.Second
+	maxConnections      = 2
+	requestBufferSize   = 1024 * 5
+	maxConnectionsTries = 3
+	connectionRetry     = 5 * time.Second
+	errorsFrame         = 10 * time.Second
+	maxErrors           = 10 // Limit of errors to restart the connection
+	connectTimeout      = 5 * time.Second
 )
 
 var (
@@ -69,9 +73,9 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 		recordsCh: make(chan record, requestBufferSize),
 	}
 
-	err := srv.Reload(&c)
+	srv.Reload(&c)
 
-	return srv, err
+	return srv, nil
 }
 
 // Reload the configuration
@@ -85,15 +89,36 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.config.MaxConnections = maxConnections
 	}
 
-	for {
-		if srv.clientsReset() == nil {
-			return nil
-		}
+	go srv.retry()
 
-		log.Printf("Waiting for the next connection try")
-		time.Sleep(connectionRetry)
+	return nil
+}
+
+func (srv *Server) retry() {
+	srv.Lock()
+	defer srv.Unlock()
+
+	if srv.failing {
+		return
 	}
 
+	srv.failing = true
+	tries := 0
+
+	for {
+		if srv.clientsReset() == nil {
+			return
+		}
+
+		tries++
+		log.Printf("Firehose ERROR: %d attempts to connect to kinens", tries)
+
+		if tries >= maxConnectionsTries {
+			time.Sleep(connectionRetry * 2)
+		} else {
+			time.Sleep(connectionRetry)
+		}
+	}
 }
 
 func (srv *Server) clientsReset() (err error) {
@@ -105,10 +130,7 @@ func (srv *Server) clientsReset() (err error) {
 	srv.reseting = true
 	defer func() { srv.reseting = false }()
 
-	lib.Debugf("clientReset")
-	defer lib.Debugf("clientReset DONE")
-
-	log.Printf("Reload firehost config to the stream %s listen %s", srv.config.StreamName, srv.config.Listen)
+	lib.Debugf("Firehose Reload config to the stream %s listen %s", srv.config.StreamName, srv.config.Listen)
 
 	var sess *session.Session
 
@@ -119,7 +141,7 @@ func (srv *Server) clientsReset() (err error) {
 	}
 
 	if err != nil {
-		log.Printf("Error session: %s", err)
+		log.Printf("Firehose ERROR: session: %s", err)
 
 		srv.errors++
 		srv.lastError = time.Now()
@@ -134,20 +156,21 @@ func (srv *Server) clientsReset() (err error) {
 	var l *firehose.DescribeDeliveryStreamOutput
 	l, err = srv.awsSvc.DescribeDeliveryStream(stream)
 	if err != nil {
-		log.Printf("ERROR connecting to kinesis/firehost: %s", err)
+		log.Printf("Firehose ERROR: describe stream: %s", err)
 
 		srv.errors++
 		srv.lastError = time.Now()
 		return err
 	}
 
-	lib.Debugf("Connected to kinesis/firehost deliver to %s (%s) status %s",
+	lib.Debugf("Firehose Connected to %s (%s) status %s",
 		*l.DeliveryStreamDescription.DeliveryStreamName,
 		*l.DeliveryStreamDescription.DeliveryStreamARN,
 		*l.DeliveryStreamDescription.DeliveryStreamStatus)
 
 	srv.lastConnection = time.Now()
 	srv.errors = 0
+	srv.failing = false
 
 	for i := len(srv.clients); i < srv.config.MaxConnections; i++ {
 		srv.clients = append(srv.clients, NewClient(srv))
@@ -174,14 +197,14 @@ func (srv *Server) Start() (e error) {
 			if e != nil {
 				if netErr, ok := e.(net.Error); ok && netErr.Timeout() {
 					// Paranoid, ignore timeout errors
-					log.Println("Timeout at local listener", srv.config.ListenHost(), e)
+					log.Println("Firehose ERROR: timeout at local listener", srv.config.ListenHost(), e)
 					continue
 				}
 				if srv.exiting {
-					log.Println("Exiting local listener", srv.config.ListenHost())
+					log.Println("Firehose ERROR: exiting local listener", srv.config.ListenHost())
 					return
 				}
-				log.Fatalln("Emergency error in local listener", srv.config.ListenHost(), e)
+				log.Fatalln("Firehose ERROR: emergency error in local listener", srv.config.ListenHost(), e)
 				return
 			}
 			go srv.handleConnection(netConn)
@@ -203,42 +226,35 @@ func (srv *Server) Exit() {
 		c.Exit()
 	}
 
-	lib.Debugf("Messages lost: %d", len(srv.recordsCh))
+	lib.Debugf("Firehose: messages lost %d", len(srv.recordsCh))
 
 	// finishing the server
 	srv.done <- true
 }
 
 func (srv *Server) failure() {
+	srv.Lock()
+	defer srv.Unlock()
+
 	if srv.reseting || srv.exiting {
 		return
 	}
 
-	srv.Lock()
-	defer srv.Unlock()
-
-	if time.Now().Sub(srv.lastError) > errorWindow {
+	if time.Now().Sub(srv.lastError) > errorsFrame {
 		srv.errors = 0
 	}
 
 	srv.errors++
 	srv.lastError = time.Now()
-	log.Println("Error detected", srv.errors)
+	log.Printf("Firehose: %d errors detected", srv.errors)
 
-	if srv.errors > 10 {
-		for {
-			if srv.clientsReset() == nil {
-				return
-			}
-
-			log.Printf("Waiting for the next connection try")
-			time.Sleep(connectionRetry)
-		}
+	if srv.errors > maxErrors {
+		go srv.retry()
 	}
 }
 
 func (srv *Server) canSend() bool {
-	if srv.reseting || srv.exiting {
+	if srv.reseting || srv.exiting || srv.failing {
 		return false
 	}
 
@@ -247,13 +263,15 @@ func (srv *Server) canSend() bool {
 
 func (srv *Server) sendRecord(r record) {
 	if !srv.canSend() {
+		putRecord(r)
 		return
 	}
 
 	select {
 	case srv.recordsCh <- r:
 	default:
-		log.Printf("ERROR: main channel is full. Queued messages %d", len(srv.recordsCh))
+		lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.recordsCh))
+		putRecord(r)
 	}
 }
 
@@ -267,27 +285,29 @@ func (srv *Server) sendBytes(b []byte) {
 
 func (srv *Server) handleConnection(netCon net.Conn) {
 
+	defer netCon.Close()
+
+	reader := redis.NewRespReader(netCon)
+
 	// Active transaction
 	multi := false
 
 	var record record
 	defer func() {
 		if multi {
-			log.Printf("ERROR: MULTI start but didn't sent an EXEC before close the connection")
+			log.Println("Firehose ERROR: MULTI closed before ending with EXEC")
 			putRecord(record)
 		}
 	}()
 
-	defer netCon.Close()
-	reader := redis.NewRespReader(netCon)
-
 	for {
 
 		r := reader.Read()
+
 		if r.IsType(redis.IOErr) {
 			if redis.IsTimeout(r) {
 				// Paranoid, don't close it just log it
-				log.Println("Local client listen timeout at", srv.config.Listen)
+				log.Println("Firehose: Local client listen timeout at", srv.config.Listen)
 				continue
 			}
 			// Connection was closed
@@ -312,9 +332,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				respKO.WriteTo(netCon)
 				continue
 			}
-			b, _ := req.Items[1].Bytes()
-			srv.sendBytes(b)
-		case "PING":
+			src, _ := req.Items[1].Bytes()
+			c := make([]byte, len(src))
+			copy(c, src)
+			srv.sendBytes(c)
 		case "MULTI":
 			multi = true
 			record = newRecord()

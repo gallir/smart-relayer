@@ -1,109 +1,105 @@
 <?PHP
 
-
-
-for ($sadd = 0; $sadd <= (int) 15; $sadd++) { 
-    $array1[] = randString(20, "1233");
+if (!isset($argv[1]) || !isset($argv[2]) || !is_numeric($argv[1]) ) {
+    printf("Usage: %s [records] [type]\n",basename(__FILE__));
+    print("- records: total messages will be send to kinesis firehose\n");
+    print("- type:\n");
+    print("\traw: json message\n");
+    print("\tmulti: send multiple redis commands (MULTI/EXEC) in one transaction (message)\n");
+    print("\tset: simple redis SET command\n");
+    die();
 }
-
-for ($sadd = 0; $sadd <= (int) 15; $sadd++) { 
-    $hash1[ randString(3,"0ABC") ] = randString(20, '9876 .€$#`'."\n");
-}
-
 
 $limit = intval($argv[1]);
-if ($limit < 1) {
-    $limit = 1;
-}
-
-$case = 1;
-if (isset($argv[2]) && $argv[2] == "json") {
-    $case = 2;
-}
+$method = $argv[2];
 
 $start = microtime(True);
-for ($i = 1; $i<=$limit; $i++) {
-    $cli = phpiredis_connect('/tmp/redis.sock');
+for ($c = 1; $c<=$limit; $c++) {
+
+    $cli = phpiredis_connect('/tmp/firehose.sock');
 
     $response = phpiredis_command_bs($cli, array("PING"));
     if ($response != "PONG" && $response != "OK") {
         print("Error in PING $response\n");
-        exit(1);
     }
 
-    // // SET
-    // $key = randString(5,"kkkkkkkkkkkkkkkk");
-    // $value = randString(10);
-    // $response = phpiredis_command_bs($cli, array("SET", $key, $value));
-    // if ($response != "OK") {
-    //     printf("Error in SET %s\n", $response);
-    //     exit(1);
-    // }
+    switch ($method) {
+        case "raw":
 
+            $data = array();
+            for ($sadd = 0; $sadd < 5; $sadd++) { 
+                $data["list"] = randString(10);
+            }
+            
+            for ($sadd = 0; $sadd < 5; $sadd++) { 
+                $data["dict"][ randString(5) ] = randString(10);
+            }
 
-
-    if ($case == 1) {
-        /**
-        * Transaction - START
-        */
-        $response = phpiredis_command_bs($cli, array("MULTI"));
-        if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-            printf("Error in HMSET %s\n", $response);
-            exit(1);
-        }
-        //---------------------------
-
-
-        // SADD
-        $key = "array1";
-        foreach($array1 as $value) {
-            $response = phpiredis_command_bs($cli, array("SADD", $key, $value));
+            $json = json_encode(array('_ts'=>microtime(true), 'data'=>$data));
+            $response = phpiredis_command_bs($cli, array("RAWSET", $json));
             if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-                printf("Error in SADD %s\n", $response);
+                printf("Error in HMSET %s\n", $response);
                 exit(1);
             }
-        }
 
+            break;
 
-        /**
-        * HMSET
-        */
-        $key = "hash1";
-        foreach ($hash1 as $k => $v) {
-            $_command = array("HMSET", $key, $k, $v);
-            $response = phpiredis_command_bs($cli,  $_command);
-        }
-        if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-            printf("Error in HMSET %s\n", $response);
-            exit(1);
-        }
+        case "multi":
 
+            $response = phpiredis_command_bs($cli, array("MULTI"));
+            if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
+                printf("Error in MULTI %s\n", $response);
+                exit(1);
+            }
 
-        //---------------------------
-        $response = phpiredis_command_bs($cli, array("EXEC"));
-        if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-            printf("Error in HMSET %s\n", $response);
-            exit(1);
-        }
+            // SET
+            $key = randString(5);
+            $value = randString(10);
+            $response = phpiredis_command_bs($cli, array("SET", $key, $value));
+            if ($response != "OK") {
+                printf("Error in SET %s\n", $response);
+                exit(1);
+            }
 
-    } else {
+            // SADD
+            $key = "list".randString(5);
+            for($i=0; $i<5; $i++) {
+                $response = phpiredis_command_bs($cli, array("SADD", $key, randString(10)));
+                if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
+                    printf("Error in SADD %s\n", $response);
+                    exit(1);
+                }
+            }
 
-        /**
-        * RAW
-        */
-        $data = array(
-            "array1" => $array1,
-            "hash1" => $hash1,
-        );
+            // HMSET
+            $key = "dict".randString(5);
+            for($i=0; $i<5; $i++) {
+                $_command = array("HMSET", $key, randString(5), randString(10));
+                $response = phpiredis_command_bs($cli,  $_command);
+                if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
+                    printf("Error in HMSET %s\n", $response);
+                    exit(1);
+                }
+            }
 
-        $json = json_encode(array('_ts'=>microtime(true), 'data'=>$data), JSON_UNESCAPED_UNICODE | JSON_HEX_QUOT | JSON_HEX_APOS | JSON_HEX_TAG | JSON_UNESCAPED_UNICODE);
-        var_dump($json);
+            $response = phpiredis_command_bs($cli, array("EXEC"));
+            if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
+                printf("Error in EXEC %s\n", $response);
+                exit(1);
+            }
 
-        $response = phpiredis_command_bs($cli, array("RAWSET", $json));
-        if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-            printf("Error in HMSET %s\n", $response);
-            exit(1);
-        }
+            break;
+
+        default:
+            // SET
+            $key = randString(5);
+            $value = randString(10);
+            $response = phpiredis_command_bs($cli, array("SET", $key, $value));
+            if ($response != "OK") {
+                printf("Error in SET %s\n", $response);
+                exit(1);
+            }
+            break;
     }
 
 }

@@ -2,8 +2,6 @@ package fh
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,7 +12,7 @@ import (
 )
 
 const (
-	recordsTimeout = 1 * time.Second
+	recordsTimeout = 15 * time.Second
 )
 
 var (
@@ -31,6 +29,7 @@ type Client struct {
 	finish  chan bool
 	done    chan bool
 	ID      int
+	tick    *time.Ticker
 }
 
 // NewClient creates a new client that connect to a Redis server
@@ -43,20 +42,35 @@ func NewClient(srv *Server) *Client {
 		status: 0,
 		srv:    srv,
 		ID:     int(n),
+		tick:   time.NewTicker(recordsTimeout),
 	}
 
 	if err := clt.Reload(); err != nil {
-		clt.log("Error on reload firehose client:", err)
+		lib.Debugf("Firehose client %d ERROR: reload %s", clt.ID, err)
 		return nil
 	}
 
-	clt.debug("Firehose client ready")
+	lib.Debugf("Firehose client %d ready", clt.ID)
 
 	return clt
 }
 
+// Reload finish the listener and run it again
+func (clt *Client) Reload() error {
+	clt.Lock()
+	defer clt.Unlock()
+
+	if clt.status > 0 {
+		clt.Exit()
+	}
+
+	go clt.listen()
+
+	return nil
+}
+
 func (clt *Client) listen() {
-	defer clt.debug("[%d] Closed listener", clt.ID)
+	defer lib.Debugf("Firehose client %d: Closed listener", clt.ID)
 	clt.status = 1
 
 	for {
@@ -71,10 +85,10 @@ func (clt *Client) listen() {
 			if len(clt.records) >= clt.srv.config.MaxRecords {
 				clt.flush()
 			}
-		case <-time.Tick(recordsTimeout):
+		case <-clt.tick.C:
 			clt.flush()
 		case <-clt.done:
-			clt.debug("Closing listener %d", clt.ID)
+			lib.Debugf("Firehose client %d: closing..", clt.ID)
 			clt.finish <- true
 			return
 		}
@@ -82,41 +96,21 @@ func (clt *Client) listen() {
 
 }
 
-func (clt *Client) Reload() error {
-	clt.Lock()
-	defer clt.Unlock()
-
-	if clt.status > 0 {
-		clt.Exit()
-	}
-
-	go clt.listen()
-
-	return nil
-}
-
-func (clt *Client) Exit() {
-	clt.debug("exiting..")
-
-	clt.done <- true
-
-	clt.debug("exiting.. chan1")
-	<-clt.finish
-	clt.debug("exiting.. chan2")
-
-	clt.debug("Exit Firehose client, pending records %d", len(clt.records))
-	clt.flush()
-}
-
 func (clt *Client) flush() {
 	if len(clt.records) <= 0 {
 		return
 	}
 
+	defer func() {
+		for _, r := range clt.records {
+			putRecord(r)
+		}
+		clt.records = nil
+	}()
+
 	records := make([]*firehose.Record, 0, len(clt.records))
 	for _, r := range clt.records {
 		records = append(records, &firehose.Record{Data: r.Bytes()})
-		putRecord(r)
 	}
 
 	req, resp := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
@@ -124,36 +118,35 @@ func (clt *Client) flush() {
 		Records:            records,
 	})
 
-	ctx := context.Background()
-	var cancelFn func()
-	ctx, cancelFn = context.WithTimeout(ctx, 2*time.Second)
-	defer cancelFn()
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+	defer cancel()
 
 	req.SetContext(ctx)
 
 	errPut := req.Send()
 	if errPut != nil {
-		clt.log("Error PutRecordBatch: %s", errPut)
+		if req.IsErrorThrottle() {
+			lib.Debugf("Firehose client %d: ERROR IsErrorThrottle")
+		}
+
+		lib.Debugf("Firehose client %d: ERROR PutRecordBatch->Send %s", clt.ID, errPut)
 		clt.srv.failure()
 		return
 	}
 
 	if *resp.FailedPutCount > 0 {
-		clt.log("ERROR: Failed %d records", *resp.FailedPutCount)
+		lib.Debugf("Firehose client %d: ERROR PutRecordBatch->FailedPutCount %d", clt.ID, *resp.FailedPutCount)
 	}
 
-	clt.records = nil
-	clt.debug("Records sent: %d", len(resp.RequestResponses))
+	lib.Debugf("Firehose: sent %d", len(records))
 }
 
-func (clt *Client) debug(format string, v ...interface{}) {
-	format = fmt.Sprint("[fh %d] ", format)
-	v = append([]interface{}{clt.ID}, v...)
-	lib.Debugf(format, v...)
-}
+// Exit finish the go routine of the client
+func (clt *Client) Exit() {
+	defer lib.Debugf("Firehose client %d: Exit, %d records lost", clt.ID, len(clt.records))
 
-func (clt *Client) log(format string, v ...interface{}) {
-	format = fmt.Sprint("[fh %d] ", format)
-	v = append([]interface{}{clt.ID}, v...)
-	log.Printf(format, v...)
+	clt.done <- true
+	<-clt.finish
+
+	clt.flush()
 }

@@ -23,15 +23,31 @@ var reqPool = sync.Pool{
 
 func newRecord() record {
 	r := reqPool.Get().(record)
+	r.Reset()
 	r.Timestamp = float64(time.Now().UnixNano()) / float64(time.Nanosecond)
-	r.bytes = nil
-	r.types = 0
-	r.Data = make(map[string]interface{})
 	return r
 }
 
 func putRecord(r record) {
 	reqPool.Put(r)
+}
+
+func (r *record) Reset() {
+	r.types = 0
+
+	if r.bytes == nil {
+		r.bytes = make([]byte, 0, 128)
+	} else {
+		r.bytes = r.bytes[:0]
+	}
+
+	if r.Data == nil {
+		r.Data = make(map[string]interface{})
+	} else {
+		for i := range r.Data {
+			delete(r.Data, i)
+		}
+	}
 }
 
 func (r *record) add(key, value string) {
@@ -65,8 +81,7 @@ func (r *record) Bytes() []byte {
 	if err != nil {
 		log.Panic(err)
 	}
-
-	ffjson.Pool(buf)
+	//ffjson.Pool(buf)
 
 	return buf
 }
