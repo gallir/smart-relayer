@@ -22,14 +22,15 @@ var (
 // Client is the thread that connect to the remote redis server
 type Client struct {
 	sync.Mutex
-	srv     *Server
-	mode    int
-	records []record
-	status  int
-	finish  chan bool
-	done    chan bool
-	ID      int
-	tick    *time.Ticker
+	srv         *Server
+	mode        int
+	records     []*record
+	status      int
+	finish      chan bool
+	done        chan bool
+	ID          int
+	tick        *time.Ticker
+	lastFlushed time.Time
 }
 
 // NewClient creates a new client that connect to a Redis server
@@ -77,7 +78,7 @@ func (clt *Client) listen() {
 		select {
 		case r := <-clt.srv.recordsCh:
 			// ignore empty messages
-			if r.Len() <= 0 {
+			if r.len() <= 0 {
 				continue
 			}
 
@@ -86,7 +87,9 @@ func (clt *Client) listen() {
 				clt.flush()
 			}
 		case <-clt.tick.C:
-			clt.flush()
+			if time.Since(clt.lastFlushed) >= recordsTimeout {
+				clt.flush()
+			}
 		case <-clt.done:
 			lib.Debugf("Firehose client %d: closing..", clt.ID)
 			clt.finish <- true
@@ -97,24 +100,19 @@ func (clt *Client) listen() {
 }
 
 func (clt *Client) flush() {
+	clt.lastFlushed = time.Now()
+
 	if len(clt.records) <= 0 {
 		return
 	}
 
-	defer func() {
-		for _, r := range clt.records {
-			putRecord(r)
-		}
-		clt.records = nil
-	}()
-
 	records := make([]*firehose.Record, 0, len(clt.records))
 	for _, r := range clt.records {
-		b := append(r.Bytes(), []byte("\n")...)
+		b := append(r.bytes(), []byte("\n")...)
 		records = append(records, &firehose.Record{Data: b})
 	}
 
-	req, resp := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
+	req, _ := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
 		DeliveryStreamName: aws.String(clt.srv.config.StreamName),
 		Records:            records,
 	})
@@ -124,22 +122,23 @@ func (clt *Client) flush() {
 
 	req.SetContext(ctx)
 
-	errPut := req.Send()
-	if errPut != nil {
+	err := req.Send()
+	if err != nil {
 		if req.IsErrorThrottle() {
 			lib.Debugf("Firehose client %d: ERROR IsErrorThrottle")
+		} else {
+			lib.Debugf("Firehose client %d: ERROR PutRecordBatch->Send %s", clt.ID, err)
 		}
-
-		lib.Debugf("Firehose client %d: ERROR PutRecordBatch->Send %s", clt.ID, errPut)
 		clt.srv.failure()
 		return
 	}
 
-	if *resp.FailedPutCount > 0 {
-		lib.Debugf("Firehose client %d: ERROR PutRecordBatch->FailedPutCount %d", clt.ID, *resp.FailedPutCount)
-	}
-
 	lib.Debugf("Firehose: sent %d", len(records))
+
+	for _, r := range clt.records {
+		putPool(r)
+	}
+	clt.records = nil
 }
 
 // Exit finish the go routine of the client

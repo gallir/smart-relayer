@@ -7,8 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/firehose"
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
@@ -25,7 +23,7 @@ type Server struct {
 	listener net.Listener
 
 	clients        []*Client
-	recordsCh      chan record
+	recordsCh      chan *record
 	awsSvc         *firehose.Firehose
 	lastConnection time.Time
 	lastError      time.Time
@@ -70,7 +68,7 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done:      done,
 		errors:    0,
-		recordsCh: make(chan record, requestBufferSize),
+		recordsCh: make(chan *record, requestBufferSize),
 	}
 
 	srv.Reload(&c)
@@ -90,91 +88,6 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	}
 
 	go srv.retry()
-
-	return nil
-}
-
-func (srv *Server) retry() {
-	srv.Lock()
-	defer srv.Unlock()
-
-	if srv.failing {
-		return
-	}
-
-	srv.failing = true
-	tries := 0
-
-	for {
-		if srv.clientsReset() == nil {
-			return
-		}
-
-		tries++
-		log.Printf("Firehose ERROR: %d attempts to connect to kinens", tries)
-
-		if tries >= maxConnectionsTries {
-			time.Sleep(connectionRetry * 2)
-		} else {
-			time.Sleep(connectionRetry)
-		}
-	}
-}
-
-func (srv *Server) clientsReset() (err error) {
-
-	if srv.exiting {
-		return nil
-	}
-
-	srv.reseting = true
-	defer func() { srv.reseting = false }()
-
-	lib.Debugf("Firehose Reload config to the stream %s listen %s", srv.config.StreamName, srv.config.Listen)
-
-	var sess *session.Session
-
-	if srv.config.Profile != "" {
-		sess, err = session.NewSessionWithOptions(session.Options{Profile: srv.config.Profile})
-	} else {
-		sess, err = session.NewSession()
-	}
-
-	if err != nil {
-		log.Printf("Firehose ERROR: session: %s", err)
-
-		srv.errors++
-		srv.lastError = time.Now()
-		return err
-	}
-
-	srv.awsSvc = firehose.New(sess, &aws.Config{Region: aws.String(srv.config.Region)})
-	stream := &firehose.DescribeDeliveryStreamInput{
-		DeliveryStreamName: &srv.config.StreamName,
-	}
-
-	var l *firehose.DescribeDeliveryStreamOutput
-	l, err = srv.awsSvc.DescribeDeliveryStream(stream)
-	if err != nil {
-		log.Printf("Firehose ERROR: describe stream: %s", err)
-
-		srv.errors++
-		srv.lastError = time.Now()
-		return err
-	}
-
-	lib.Debugf("Firehose Connected to %s (%s) status %s",
-		*l.DeliveryStreamDescription.DeliveryStreamName,
-		*l.DeliveryStreamDescription.DeliveryStreamARN,
-		*l.DeliveryStreamDescription.DeliveryStreamStatus)
-
-	srv.lastConnection = time.Now()
-	srv.errors = 0
-	srv.failing = false
-
-	for i := len(srv.clients); i < srv.config.MaxConnections; i++ {
-		srv.clients = append(srv.clients, NewClient(srv))
-	}
 
 	return nil
 }
@@ -201,7 +114,7 @@ func (srv *Server) Start() (e error) {
 					continue
 				}
 				if srv.exiting {
-					log.Println("Firehose ERROR: exiting local listener", srv.config.ListenHost())
+					log.Println("Firehose: exiting local listener", srv.config.ListenHost())
 					return
 				}
 				log.Fatalln("Firehose ERROR: emergency error in local listener", srv.config.ListenHost(), e)
@@ -232,27 +145,6 @@ func (srv *Server) Exit() {
 	srv.done <- true
 }
 
-func (srv *Server) failure() {
-	srv.Lock()
-	defer srv.Unlock()
-
-	if srv.reseting || srv.exiting {
-		return
-	}
-
-	if time.Now().Sub(srv.lastError) > errorsFrame {
-		srv.errors = 0
-	}
-
-	srv.errors++
-	srv.lastError = time.Now()
-	log.Printf("Firehose: %d errors detected", srv.errors)
-
-	if srv.errors > maxErrors {
-		go srv.retry()
-	}
-}
-
 func (srv *Server) canSend() bool {
 	if srv.reseting || srv.exiting || srv.failing {
 		return false
@@ -261,9 +153,9 @@ func (srv *Server) canSend() bool {
 	return true
 }
 
-func (srv *Server) sendRecord(r record) {
+func (srv *Server) sendRecord(r *record) {
 	if !srv.canSend() {
-		putRecord(r)
+		putPool(r)
 		return
 	}
 
@@ -271,14 +163,14 @@ func (srv *Server) sendRecord(r record) {
 	case srv.recordsCh <- r:
 	default:
 		lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.recordsCh))
-		putRecord(r)
+		putPool(r)
 	}
 }
 
 func (srv *Server) sendBytes(b []byte) {
-	r := newRecord()
+	r := fromPool()
 	r.types = 1
-	r.bytes = b
+	r.raw = b
 
 	srv.sendRecord(r)
 }
@@ -292,11 +184,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	// Active transaction
 	multi := false
 
-	var record record
+	var record *record
 	defer func() {
 		if multi {
 			log.Println("Firehose ERROR: MULTI closed before ending with EXEC")
-			putRecord(record)
+			putPool(record)
 		}
 	}()
 
@@ -333,12 +225,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				continue
 			}
 			src, _ := req.Items[1].Bytes()
-			c := make([]byte, len(src))
-			copy(c, src)
-			srv.sendBytes(c)
+			srv.sendBytes(src)
 		case "MULTI":
 			multi = true
-			record = newRecord()
+			record = fromPool()
 		case "EXEC":
 			multi = false
 			srv.sendRecord(record)
@@ -348,7 +238,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if multi {
 				record.add(k, v)
 			} else {
-				record = newRecord()
+				record = fromPool()
 				record.add(k, v)
 				srv.sendRecord(record)
 			}
@@ -358,7 +248,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if multi {
 				record.sadd(k, v)
 			} else {
-				record = newRecord()
+				record = fromPool()
 				record.sadd(k, v)
 				srv.sendRecord(record)
 			}
@@ -368,20 +258,17 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			var v string
 
 			if !multi {
-				record = newRecord()
+				record = fromPool()
 			}
 
-			for i, o := range req.Items {
+			for i, o := range req.Items[1:] {
 				if i == 0 {
-					continue
-				}
-
-				if i == 1 {
 					key, _ = o.Str()
 					continue
 				}
 
-				if i%2 == 0 {
+				// Now odd elements are the keys
+				if i%2 != 0 {
 					k, _ = o.Str()
 				} else {
 					v, _ = o.Str()
