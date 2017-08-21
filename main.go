@@ -13,6 +13,7 @@ import (
 
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/cluster"
+	"github.com/gallir/smart-relayer/redis/fh"
 	"github.com/gallir/smart-relayer/redis/radix"
 )
 
@@ -36,6 +37,8 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 		srv, err = redis2.New(conf, done)
 	case "redis-cluster", "redis-plus":
 		srv, err = cluster.New(conf, done)
+	case "firehose":
+		srv, err = fh.New(conf, done)
 	default:
 		err = errors.New("no valid option")
 	}
