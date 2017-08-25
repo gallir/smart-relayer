@@ -21,9 +21,9 @@ type Client struct {
 	ready              bool
 	conn               net.Conn
 	buf                *lib.NetBuffedReadWriter
-	requestChan        chan *Request // The relayer sends the requests via this channel
-	database           int           // The current selected database
-	queueChan          chan *Request // Requests sent to the Redis server, some pending of responses
+	requestChan        chan *lib.Request // The relayer sends the requests via this channel
+	database           int               // The current selected database
+	queueChan          chan *lib.Request // Requests sent to the Redis server, some pending of responses
 	lastConnectFailure time.Time
 	connectedAt        time.Time
 	failures           int64
@@ -35,7 +35,7 @@ func NewClient(c *lib.RelayerConfig) lib.RelayerClient {
 	clt := &Client{}
 	clt.Reload(c)
 
-	clt.requestChan = make(chan *Request, requestBufferSize)
+	clt.requestChan = make(chan *lib.Request, requestBufferSize)
 	clt.ready = true
 	go clt.listen(clt.requestChan)
 	lib.Debugf("Client %s for target %s ready", clt.config.Listen, clt.config.Host())
@@ -80,7 +80,7 @@ func (clt *Client) connect() bool {
 	clt.connectedAt = time.Now()
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
 	clt.conn = conn
-	clt.queueChan = make(chan *Request, requestBufferSize)
+	clt.queueChan = make(chan *lib.Request, requestBufferSize)
 	clt.buf = lib.NewNetReadWriter(conn, time.Duration(clt.config.Timeout)*time.Second, 0)
 
 	go clt.netListener(clt.buf, clt.queueChan)
@@ -89,7 +89,7 @@ func (clt *Client) connect() bool {
 }
 
 // Listen for clients' messages from the requestChan
-func (clt *Client) listen(ch chan *Request) {
+func (clt *Client) listen(ch chan *lib.Request) {
 	defer log.Println("Finished Redis client")
 	defer func() {
 		clt.disconnect()
@@ -106,7 +106,7 @@ func (clt *Client) listen(ch chan *Request) {
 			_, err := clt.write(req)
 			if err != nil {
 				log.Println("Error writing:", clt.config.Host(), err)
-				sendAsyncResponse(req.responseChannel, respKO)
+				sendAsyncResponse(req.ResponseChannel, respKO)
 				clt.disconnect()
 			}
 		case <-time.After(maxIdle):
@@ -120,7 +120,7 @@ func (clt *Client) listen(ch chan *Request) {
 }
 
 // This goroutine listens for incoming answers from the Redis server
-func (clt *Client) netListener(buf io.ReadWriter, queue chan *Request) {
+func (clt *Client) netListener(buf io.ReadWriter, queue chan *lib.Request) {
 	reader := redis.NewRespReader(buf)
 	for req := range queue {
 		r := reader.Read()
@@ -134,7 +134,7 @@ func (clt *Client) netListener(buf io.ReadWriter, queue chan *Request) {
 			} else {
 				log.Printf("Error with server %s connection: %s", clt.config.Host(), r.Err)
 			}
-			sendAsyncResponse(req.responseChannel, respKO) // Send back and error immediately
+			sendAsyncResponse(req.ResponseChannel, respKO) // Send back and error immediately
 			clt.disconnect()
 			return
 		}
@@ -142,7 +142,7 @@ func (clt *Client) netListener(buf io.ReadWriter, queue chan *Request) {
 		if clt.config.Compress || clt.config.Uncompress {
 			r = compress.UResp(r)
 		}
-		sendAsyncResponse(req.responseChannel, r)
+		sendAsyncResponse(req.ResponseChannel, r)
 	}
 	lib.Debugf("Net listener exiting")
 }
@@ -151,27 +151,27 @@ func (clt *Client) purgeRequests() {
 	for {
 		select {
 		case req := <-clt.queueChan:
-			sendAsyncResponse(req.responseChannel, respKO)
+			sendAsyncResponse(req.ResponseChannel, respKO)
 		default:
 			return
 		}
 	}
 }
 
-func (clt *Client) write(r *Request) (int64, error) {
+func (clt *Client) write(r *lib.Request) (int64, error) {
 	if clt.conn == nil && !clt.connect() {
 		return 0, fmt.Errorf("Connection failed")
 	}
 
-	if r.command == selectCommand {
-		if clt.mode == lib.ModeSmart && clt.database == r.database { // There is no need to select again
+	if r.Command == selectCommand {
+		if clt.mode == lib.ModeSmart && clt.database == r.Database { // There is no need to select again
 			return 0, nil
 		}
-		clt.database = r.database
-	} else if clt.database != r.database {
+		clt.database = r.Database
+	} else if clt.database != r.Database {
 		changer := redis.NewResp([]interface{}{
 			selectCommand,
-			fmt.Sprintf("%d", r.database),
+			fmt.Sprintf("%d", r.Database),
 		})
 		_, err := changer.WriteTo(clt.buf)
 		if err != nil {
@@ -183,13 +183,13 @@ func (clt *Client) write(r *Request) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		clt.database = r.database
+		clt.database = r.Database
 		clt.queueChan <- nil
 	}
 
-	resp := r.resp
+	resp := r.Resp
 	if clt.config.Compress {
-		items, ok := compress.Items(r.items)
+		items, ok := compress.Items(r.Items)
 		if ok {
 			resp = redis.NewResp(items)
 		}
@@ -202,7 +202,7 @@ func (clt *Client) write(r *Request) (int64, error) {
 		return 0, err
 	}
 
-	err = clt.flush(r.responseChannel != nil) // Force flush if it's an sync command
+	err = clt.flush(r.ResponseChannel != nil) // Force flush if it's an sync command
 	if err != nil {
 		return 0, err
 	}
@@ -265,7 +265,7 @@ func (clt *Client) IsValid() bool {
 }
 
 func (clt *Client) Send(req interface{}) (e error) {
-	r := req.(*Request)
+	r := req.(*lib.Request)
 	defer func() {
 		r := recover() // To avoid panic due to closed channels
 		if r != nil {
