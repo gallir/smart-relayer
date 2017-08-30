@@ -171,20 +171,20 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			return
 		}
 
-		req := newRequest(r, &srv.config)
+		req := lib.NewRequest(r, &srv.config)
 		if req == nil {
 			respBadCommand.WriteTo(netCon)
 			continue
 		}
 
-		if req.database != unknownDB && req.database != currentDB {
-			currentDB = req.database
+		if req.Database != lib.UnknownDB && req.Database != currentDB {
+			currentDB = req.Database
 		}
-		req.database = currentDB
+		req.Database = currentDB
 
 		// Smart mode, answer immediately and forget
 		if srv.mode == lib.ModeSmart {
-			fastResponse, ok := commands[req.command]
+			fastResponse, ok := commands[req.Command]
 			if ok {
 				e := client.Send(req)
 				if e != nil {
@@ -198,7 +198,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		}
 
 		// Synchronized mode
-		req.responseChannel = responseCh
+		req.ResponseChannel = responseCh
 
 		e := client.Send(req)
 		if e != nil {
@@ -217,7 +217,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	}
 }
 
-func sendRequest(c chan *Request, r *Request) (ok bool) {
+func sendRequest(c chan *lib.Request, r *lib.Request) (ok bool) {
 	defer func() {
 		e := recover() // To avoid panic due to closed channels
 		if e != nil {
