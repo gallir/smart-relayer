@@ -112,6 +112,7 @@ func (clt *Client) flush() {
 	records := make([]*firehose.Record, 0)
 
 	b := buffPool.Get()
+	defer buffPool.Put(b)
 
 	for _, r := range clt.records {
 		if r.len()+b.Len()+1 >= maxRecordSize {
@@ -126,7 +127,6 @@ func (clt *Client) flush() {
 
 	if b.Len() > 0 {
 		bs := append([]byte(nil), b.Bytes()...)
-		buffPool.Put(b)
 		records = append(records, &firehose.Record{Data: bs})
 	}
 
