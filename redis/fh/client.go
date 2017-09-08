@@ -8,15 +8,18 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/firehose"
+	"github.com/gallir/bytebufferpool"
 	"github.com/gallir/smart-relayer/lib"
 )
 
 const (
 	recordsTimeout = 15 * time.Second
+	maxRecordSize  = 1000000 // The maximum size of a record sent to Kinesis Firehose, before base64-encoding, is 1000 KB
 )
 
 var (
 	clientCount int64 = 0
+	buffPool          = &bytebufferpool.Pool{}
 )
 
 // Client is the thread that connect to the remote redis server
@@ -106,10 +109,27 @@ func (clt *Client) flush() {
 		return
 	}
 
-	records := make([]*firehose.Record, 0, len(clt.records))
+	records := make([]*firehose.Record, 0)
+
+	b := buffPool.Get()
+
 	for _, r := range clt.records {
-		b := append(r.bytes(), []byte("\n")...)
-		records = append(records, &firehose.Record{Data: b})
+		if r.len()+b.Len()+1 >= maxRecordSize {
+			bs := append([]byte(nil), b.Bytes()...)
+			buffPool.Put(b)
+			b = buffPool.Get()
+			records = append(records, &firehose.Record{Data: bs})
+		}
+
+		b.Write(r.bytes())
+		b.Write([]byte("\n"))
+	}
+
+	if b.Len() > 0 {
+		bs := append([]byte(nil), b.Bytes()...)
+
+		buffPool.Put(b)
+		records = append(records, &firehose.Record{Data: bs})
 	}
 
 	req, _ := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
@@ -125,9 +145,9 @@ func (clt *Client) flush() {
 	err := req.Send()
 	if err != nil {
 		if req.IsErrorThrottle() {
-			lib.Debugf("Firehose client %d: ERROR IsErrorThrottle")
+			lib.Debugf("Firehose client %d: ERROR IsErrorThrottle: %s", clt.ID, err)
 		} else {
-			lib.Debugf("Firehose client %d: ERROR PutRecordBatch->Send %s", clt.ID, err)
+			lib.Debugf("Firehose client %d: ERROR PutRecordBatch->Send: %s", clt.ID, err)
 		}
 		clt.srv.failure()
 		return
