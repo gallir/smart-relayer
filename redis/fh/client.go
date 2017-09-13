@@ -116,9 +116,8 @@ func (clt *Client) flush() {
 
 	for _, r := range clt.records {
 		if r.len()+b.Len()+1 >= maxRecordSize {
-			bs := append([]byte(nil), b.Bytes()...)
+			records = append(records, &firehose.Record{Data: b.Bytes()})
 			b.Reset()
-			records = append(records, &firehose.Record{Data: bs})
 		}
 
 		b.Write(r.bytes())
@@ -126,8 +125,8 @@ func (clt *Client) flush() {
 	}
 
 	if b.Len() > 0 {
-		bs := append([]byte(nil), b.Bytes()...)
-		records = append(records, &firehose.Record{Data: bs})
+		records = append(records, &firehose.Record{Data: b.Bytes()})
+		b.Reset()
 	}
 
 	req, _ := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
