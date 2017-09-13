@@ -112,7 +112,7 @@ func (clt *Client) flush() {
 	records := make([]*firehose.Record, 0)
 
 	b := buffPool.Get()
-	defer buffPool.Put(b)
+	b.Reset()
 
 	for _, r := range clt.records {
 		if r.len()+b.Len()+1 >= maxRecordSize {
@@ -126,8 +126,9 @@ func (clt *Client) flush() {
 
 	if b.Len() > 0 {
 		records = append(records, &firehose.Record{Data: b.Bytes()})
-		b.Reset()
 	}
+
+	defer buffPool.Put(b)
 
 	req, _ := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
 		DeliveryStreamName: aws.String(clt.srv.config.StreamName),
