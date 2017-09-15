@@ -26,7 +26,11 @@ for ($c = 1; $c<=$limit; $c++) {
     switch ($method) {
         case "raw":
 
-            $data = array();
+            $data = array(
+                "pid" => getmypid(),
+                "count" => $c,
+            );
+
             for ($sadd = 0; $sadd < 5; $sadd++) { 
                 $data["list"] = randString(10);
             }

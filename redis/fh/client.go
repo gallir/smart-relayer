@@ -8,7 +8,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/firehose"
-	"github.com/gallir/bytebufferpool"
 	"github.com/gallir/smart-relayer/lib"
 )
 
@@ -16,21 +15,29 @@ const (
 	recordsTimeout  = 15 * time.Second
 	maxRecordSize   = 1000 * 1024     // The maximum size of a record sent to Kinesis Firehose, before base64-encoding, is 1000 KB
 	maxBatchRecords = 500             // The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
-	maxTotalSize    = 4 * 1024 * 2014 // 4 MB per call
+	maxBatchSize    = 4 * 1024 * 1024 // 4 MB per call
 )
 
 var (
 	clientCount int64 = 0
+	newLine           = []byte("\n")
 )
+
+var pool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 0)
+	},
+}
 
 // Client is the thread that connect to the remote redis server
 type Client struct {
 	sync.Mutex
 	srv         *Server
 	mode        int
-	buff        bytebufferpool.ByteBuffer
+	buff        []byte
 	count       int
-	records     []*firehose.Record
+	batch       []*firehose.Record
+	batchSize   int
 	status      int
 	finish      chan bool
 	done        chan bool
@@ -44,15 +51,12 @@ func NewClient(srv *Server) *Client {
 	n := atomic.AddInt64(&clientCount, 1)
 
 	clt := &Client{
-		done:    make(chan bool),
-		finish:  make(chan bool),
-		status:  0,
-		srv:     srv,
-		ID:      int(n),
-		tick:    time.NewTicker(recordsTimeout),
-		buff:    bytebufferpool.ByteBuffer{},
-		count:   0,
-		records: make([]*firehose.Record, 0),
+		done:   make(chan bool),
+		finish: make(chan bool),
+		status: 0,
+		srv:    srv,
+		ID:     int(n),
+		tick:   time.NewTicker(recordsTimeout),
 	}
 
 	if err := clt.Reload(); err != nil {
@@ -81,7 +85,10 @@ func (clt *Client) Reload() error {
 
 func (clt *Client) listen() {
 	defer lib.Debugf("Firehose client %d: Closed listener", clt.ID)
+
 	clt.status = 1
+
+	clt.reset()
 
 	for {
 		select {
@@ -91,14 +98,26 @@ func (clt *Client) listen() {
 				continue
 			}
 
-			clt.store(r)
-			clt.count++
-
-			if clt.count >= clt.srv.config.MaxRecords {
+			// The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
+			if clt.batchSize+r.len()+1 >= maxBatchSize || len(clt.batch)+1 >= maxBatchRecords || clt.count >= clt.srv.config.MaxRecords {
+				// Force flush
 				clt.flush()
 			}
+
+			// The maximum size of a record sent to Kinesis Firehose, before base64-encoding, is 1000 KB.
+			if len(clt.buff)+r.len()+1 >= maxRecordSize {
+				// Save in new record
+				clt.appendRecord()
+			}
+
+			clt.buff = append(clt.buff, r.bytes()...)
+			clt.buff = append(clt.buff, []byte("\n")...)
+
+			clt.count++
+			clt.batchSize += len(clt.buff)
+
 		case <-clt.tick.C:
-			if time.Since(clt.lastFlushed) >= recordsTimeout && clt.buff.Len() > 0 {
+			if time.Since(clt.lastFlushed) >= recordsTimeout && (len(clt.buff) > 0 || len(clt.batch) > 0) {
 				clt.flush()
 			}
 		case <-clt.done:
@@ -107,47 +126,58 @@ func (clt *Client) listen() {
 			return
 		}
 	}
-
 }
 
-func (clt *Client) buildRecord() {
-	clt.records = append(clt.records, &firehose.Record{Data: clt.buff.Bytes()})
-	clt.buff.Reset()
-}
-
-func (clt *Client) store(r *interRecord) {
-
-	if clt.buff.Len()+r.len()+1 >= maxRecordSize {
-		clt.buildRecord()
-	}
-
-	clt.buff.Write(r.bytes())
-}
-
-func (clt *Client) flush() {
-	clt.lastFlushed = time.Now()
-
-	// Check if there is something in the buffer
-	if clt.buff.Len() > 0 {
-		// Store in a firehose record
-		clt.buildRecord()
-	}
-
-	if len(clt.records) <= 0 {
+// appendRecord store the current buffer in a new record and append it to the batch
+func (clt *Client) appendRecord() {
+	if len(clt.buff) <= 0 {
+		// Don't create empty records
 		return
 	}
 
-	// Send to firehose
-	clt.putRecordBatch(clt.records)
-
-	// Reset
-	clt.records = clt.records[:0]
-	clt.count = 0
-	clt.buff.Reset()
+	clt.batch = append(clt.batch, &firehose.Record{Data: clt.buff})
+	clt.buff = pool.Get().([]byte)
 }
 
-func (clt *Client) putRecordBatch(records []*firehose.Record) {
+func (clt *Client) reset() {
+	// Reset all variables
+	clt.batchSize = 0
+	clt.batch = make([]*firehose.Record, 0)
+	clt.count = 0
 
+	if clt.buff != nil {
+		pool.Put(clt.buff)
+	}
+
+	clt.buff = pool.Get().([]byte)
+}
+
+// flush build the last record if need and send the records slice to AWS Firehose
+func (clt *Client) flush() {
+	clt.lastFlushed = time.Now()
+
+	// Don't send empty batch
+	if len(clt.buff) == 0 && len(clt.batch) == 0 {
+		return
+	}
+
+	// append current buffer to the batch
+	clt.appendRecord()
+
+	// Send the batch to AWS Firehose
+	clt.putRecordBatch(clt.batch)
+
+	// Put slice in the pull after sent to AWS Firehose
+	for _, r := range clt.batch {
+		r.Data = r.Data[:0]
+		pool.Put(r.Data)
+	}
+
+	clt.reset()
+}
+
+// putRecordBatch is the client connection to AWS Firehose
+func (clt *Client) putRecordBatch(records []*firehose.Record) {
 	req, _ := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
 		DeliveryStreamName: aws.String(clt.srv.config.StreamName),
 		Records:            records,
@@ -174,7 +204,7 @@ func (clt *Client) putRecordBatch(records []*firehose.Record) {
 
 // Exit finish the go routine of the client
 func (clt *Client) Exit() {
-	defer lib.Debugf("Firehose client %d: Exit, %d records lost", clt.ID, len(clt.records))
+	defer lib.Debugf("Firehose client %d: Exit, %d records lost", clt.ID, len(clt.batch))
 
 	clt.done <- true
 	<-clt.finish

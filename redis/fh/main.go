@@ -225,9 +225,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			srv.sendBytes(src)
 		case "MULTI":
 			multi = true
-			row = &interRecord{
-				types: 1,
-			}
+			row = &interRecord{}
 		case "EXEC":
 			multi = false
 			srv.sendRecord(row)
@@ -237,9 +235,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if multi {
 				row.add(k, v)
 			} else {
-				row = &interRecord{
-					types: 1,
-				}
+				row = &interRecord{}
 				row.add(k, v)
 				srv.sendRecord(row)
 			}
@@ -249,9 +245,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if multi {
 				row.sadd(k, v)
 			} else {
-				row = &interRecord{
-					types: 1,
-				}
+				row = &interRecord{}
 				row.sadd(k, v)
 				srv.sendRecord(row)
 			}
@@ -262,7 +256,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 			if !multi {
 				row = &interRecord{
-					types: 1,
+					types: 0,
 				}
 			}
 
