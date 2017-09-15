@@ -32,7 +32,7 @@ type Server struct {
 
 const (
 	maxConnections      = 2
-	requestBufferSize   = 1024 * 5
+	requestBufferSize   = 1024 * 10
 	maxConnectionsTries = 3
 	connectionRetry     = 5 * time.Second
 	errorsFrame         = 10 * time.Second

@@ -2,6 +2,7 @@ package fh
 
 import (
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -109,9 +110,28 @@ func (srv *Server) clientsReset() (err error) {
 	srv.errors = 0
 	srv.failing = false
 
-	for i := len(srv.clients); i < srv.config.MaxConnections; i++ {
-		srv.clients = append(srv.clients, NewClient(srv))
+	currClients := len(srv.clients)
+
+	// No changes in the number of clients
+	if currClients == srv.config.MaxConnections {
+		return nil
 	}
+
+	// If the config define lower number than the active clients remove the difference
+	if currClients > srv.config.MaxConnections {
+		for i := currClients; i > srv.config.MaxConnections; i-- {
+			k := i - 1
+			srv.clients[k].Exit()
+			srv.clients = append(srv.clients[:k], srv.clients[k+1:]...)
+		}
+		atomic.StoreInt64(&clientCount, int64(len(srv.clients)))
+	} else {
+		// If the config define higher number than the active clients start new clients
+		for i := currClients; i < srv.config.MaxConnections; i++ {
+			srv.clients = append(srv.clients, NewClient(srv))
+		}
+	}
+	atomic.StoreInt64(&clientCount, int64(len(srv.clients)))
 
 	return nil
 }
