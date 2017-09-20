@@ -23,7 +23,7 @@ type Server struct {
 	listener net.Listener
 
 	clients        []*Client
-	recordsCh      chan *interRecord
+	recordsCh      chan *lib.InterRecord
 	awsSvc         *firehose.Firehose
 	lastConnection time.Time
 	lastError      time.Time
@@ -68,7 +68,7 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
 		done:      done,
 		errors:    0,
-		recordsCh: make(chan *interRecord, requestBufferSize),
+		recordsCh: make(chan *lib.InterRecord, requestBufferSize),
 	}
 
 	srv.Reload(&c)
@@ -153,7 +153,7 @@ func (srv *Server) canSend() bool {
 	return true
 }
 
-func (srv *Server) sendRecord(r *interRecord) {
+func (srv *Server) sendRecord(r *lib.InterRecord) {
 	if !srv.canSend() {
 		return
 	}
@@ -166,9 +166,9 @@ func (srv *Server) sendRecord(r *interRecord) {
 }
 
 func (srv *Server) sendBytes(b []byte) {
-	r := &interRecord{
-		types: 1,
-		raw:   b,
+	r := &lib.InterRecord{
+		Types: 1,
+		Raw:   b,
 	}
 	srv.sendRecord(r)
 }
@@ -182,7 +182,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	// Active transaction
 	multi := false
 
-	var row *interRecord
+	var row *lib.InterRecord
 	defer func() {
 		if multi {
 			log.Println("Firehose ERROR: MULTI closed before ending with EXEC")
@@ -225,7 +225,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			srv.sendBytes(src)
 		case "MULTI":
 			multi = true
-			row = &interRecord{}
+			row = &lib.InterRecord{}
 		case "EXEC":
 			multi = false
 			srv.sendRecord(row)
@@ -233,20 +233,20 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			k, _ := req.Items[1].Str()
 			v, _ := req.Items[2].Str()
 			if multi {
-				row.add(k, v)
+				row.Add(k, v)
 			} else {
-				row = &interRecord{}
-				row.add(k, v)
+				row = &lib.InterRecord{}
+				row.Add(k, v)
 				srv.sendRecord(row)
 			}
 		case "SADD":
 			k, _ := req.Items[1].Str()
 			v, _ := req.Items[2].Str()
 			if multi {
-				row.sadd(k, v)
+				row.Sadd(k, v)
 			} else {
-				row = &interRecord{}
-				row.sadd(k, v)
+				row = &lib.InterRecord{}
+				row.Sadd(k, v)
 				srv.sendRecord(row)
 			}
 		case "HMSET":
@@ -255,8 +255,8 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			var v string
 
 			if !multi {
-				row = &interRecord{
-					types: 0,
+				row = &lib.InterRecord{
+					Types: 0,
 				}
 			}
 
@@ -271,7 +271,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 					k, _ = o.Str()
 				} else {
 					v, _ = o.Str()
-					row.mhset(key, k, v)
+					row.Mhset(key, k, v)
 				}
 			}
 

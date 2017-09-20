@@ -95,24 +95,24 @@ func (clt *Client) listen() {
 		select {
 		case r := <-clt.srv.recordsCh:
 			// ignore empty messages
-			if r.len() <= 0 {
+			if r.Len() <= 0 {
 				continue
 			}
 
 			// The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
-			if clt.count >= clt.srv.config.MaxRecords || clt.batchSize+r.len()+1 >= maxBatchSize || len(clt.batch)+1 >= maxBatchRecords {
+			if clt.count >= clt.srv.config.MaxRecords || clt.batchSize+r.Len()+1 >= maxBatchSize || len(clt.batch)+1 >= maxBatchRecords {
 				// Force flush
 				clt.flush()
 			}
 
 			// The maximum size of a record sent to Kinesis Firehose, before base64-encoding, is 1000 KB.
-			if len(clt.buff)+r.len()+1 >= maxRecordSize || clt.count+1 >= clt.srv.config.MaxRecords {
+			if len(clt.buff)+r.Len()+1 >= maxRecordSize || clt.count+1 >= clt.srv.config.MaxRecords {
 				// Save in new record
 				clt.appendRecord(clt.buff)
 				clt.buff = pool.Get().([]byte)
 			}
 
-			clt.buff = append(clt.buff, r.bytes()...)
+			clt.buff = append(clt.buff, r.Bytes()...)
 			clt.buff = append(clt.buff, newLine...)
 
 			clt.count++
