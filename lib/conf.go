@@ -22,7 +22,7 @@ type RelayerConfig struct {
 	Protocol           string // redis | redis2 | redis-cluster | redis-plus | firehose
 	Mode               string // smart | sync
 	Listen             string // Local url | also is streamName for Kinesis Firehose
-	URL                string // Redis server url
+	URL                string // Redis/SQS url endpoint
 	MaxConnections     int    // Pool management
 	MaxIdleConnections int    // Pool managemente
 	Compress           bool
