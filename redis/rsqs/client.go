@@ -2,13 +2,10 @@ package rsqs
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/spaolacci/murmur3"
 
 	"github.com/aws/aws-sdk-go/service/sqs"
 
@@ -16,7 +13,7 @@ import (
 )
 
 const (
-	recordsTimeout  = 1 * time.Second // Maximum time after send a batch
+	recordsTimeout  = 2 * time.Second // Maximum time after send a batch
 	maxRecordSize   = 262144          // The maximum is 262,144 bytes (256 KB).
 	maxBatchRecords = 10              // A single message batch request can include a maximum of 10 messages.
 )
@@ -31,7 +28,6 @@ type Client struct {
 	srv         *Server
 	mode        int
 	buff        []byte
-	count       int
 	batch       []*sqs.SendMessageBatchRequestEntry
 	batchSize   int
 	status      int
@@ -99,25 +95,24 @@ func (clt *Client) listen() {
 				clt.flush()
 			}
 
+			s, id := r.StringUniqID()
+
 			// The maximum is 262,144 bytes (256 KB)
-			if clt.batchSize+1 >= maxRecordSize {
+			if len(s) >= maxRecordSize {
 				// Save in new record
-				fmt.Println(r.Bytes())
+				log.Printf("SQS ERROR: the message is over %dKB can't be send", maxRecordSize/1024)
 				continue
 			}
 
-			h := murmur3.New128()
-			h.Write(r.Bytes())
-			h1, h2 := h.Sum128()
-			hId := fmt.Sprintf("%v-%v", h1, h2)
-
 			m := &sqs.SendMessageBatchRequestEntry{}
-			m.SetMessageBody(string(r.Bytes()))
-			m.SetId(string(hId))
-			m.SetMessageGroupId(clt.srv.config.URL)
+			m.SetId(id)
+			m.SetMessageBody(s)
+			if clt.srv.fifo {
+				m.SetMessageGroupId(clt.srv.config.GroupID)
+			}
 			clt.batch = append(clt.batch, m)
 
-			clt.batchSize += r.Len()
+			clt.batchSize += len(s)
 
 		case <-clt.tick.C:
 			if time.Since(clt.lastFlushed) >= recordsTimeout && (len(clt.buff) > 0 || len(clt.batch) > 0) {
@@ -144,7 +139,6 @@ func (clt *Client) flush() {
 
 	clt.batchSize = 0
 	clt.batch = nil
-	clt.count = 0
 }
 
 // putRecordBatch is the client connection to AWS SQS
@@ -163,11 +157,16 @@ func (clt *Client) putRecordBatch() {
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
 
-	req, _ := clt.srv.awsSvc.SendMessageBatchRequest(s)
-
+	req, output := clt.srv.awsSvc.SendMessageBatchRequest(s)
 	req.SetContext(ctx)
 	if err := req.Send(); err != nil {
 		log.Printf("SQS Send ERROR: %s", err)
+		return
+	}
+
+	if len(output.Failed) > 0 {
+		log.Printf("SQS client %d ERROR: sent batch with %d records, %d bytes, %d failed: %s - %s",
+			clt.ID, len(clt.batch), clt.batchSize, len(output.Failed), *output.Failed[0].Code, *output.Failed[0].Message)
 		return
 	}
 

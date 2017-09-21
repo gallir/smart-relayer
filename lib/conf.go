@@ -33,6 +33,7 @@ type RelayerConfig struct {
 
 	MaxRecords int     // To send in batch to Kinesis
 	StreamName string  // Kinesis/Firehose stream name
+	GroupID    string  // Group ID for AWS SQS fifo
 	Region     string  // AWS region
 	Profile    string  // AWS Profile name
 	Spin       float64 // % of ignored messages

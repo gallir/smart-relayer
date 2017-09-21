@@ -37,27 +37,22 @@ func (srv *Server) retry() {
 	srv.Lock()
 	defer srv.Unlock()
 
-	if srv.failing {
+	srv.failing = true
+
+	if srv.clientsReset() == nil {
 		return
 	}
 
-	srv.failing = true
-	tries := 0
+	srv.tries++
+	log.Printf("SQS ERROR: %d attempts to connect to SQS: %s", srv.tries, srv.config.URL)
 
-	for {
-		if srv.clientsReset() == nil {
-			return
-		}
-
-		tries++
-		log.Printf("SQS ERROR: %d attempts to connect to kinens", tries)
-
-		if tries >= maxConnectionsTries {
-			time.Sleep(connectionRetry * 2)
-		} else {
-			time.Sleep(connectionRetry)
-		}
+	if srv.tries >= maxConnectionsTries {
+		time.Sleep(connectionRetry * 2)
+	} else {
+		time.Sleep(connectionRetry)
 	}
+
+	go srv.retry()
 }
 
 func (srv *Server) clientsReset() (err error) {
@@ -98,8 +93,8 @@ func (srv *Server) clientsReset() (err error) {
 
 	req, _ := srv.awsSvc.GetQueueAttributesRequest(i)
 	req.SetContext(ctx)
-	if req.Send() != nil {
-		log.Printf("SQS ERROR: session: %s: %s", srv.config.URL, err)
+	if err := req.Send(); err != nil {
+		log.Printf("SQS ERROR: getAttributes: %s: %s", srv.config.URL, err)
 		return err
 	}
 

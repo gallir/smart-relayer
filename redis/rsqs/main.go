@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ type Server struct {
 	reseting bool
 	failing  bool
 	listener net.Listener
+	tries    int
 
 	clients        []*Client
 	recordsCh      chan *lib.InterRecord
@@ -28,11 +30,12 @@ type Server struct {
 	lastConnection time.Time
 	lastError      time.Time
 	errors         int64
+	fifo           bool
 }
 
 const (
-	maxConnections      = 2
-	requestBufferSize   = 1024 * 10
+	maxConnections      = 1
+	requestBufferSize   = 10 * 2
 	maxConnectionsTries = 3
 	connectionRetry     = 5 * time.Second
 	errorsFrame         = 10 * time.Second
@@ -87,6 +90,20 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.config.MaxConnections = maxConnections
 	}
 
+	if srv.config.MaxRecords <= 0 {
+		srv.config.MaxRecords = maxBatchRecords
+	}
+
+	if strings.HasSuffix(srv.config.URL, "fifo") {
+		srv.fifo = true
+		if srv.config.GroupID == "" {
+			srv.config.GroupID = srv.config.ListenHost()
+		}
+	} else {
+		srv.fifo = false
+		srv.config.GroupID = ""
+	}
+
 	go srv.retry()
 
 	return nil
@@ -139,7 +156,9 @@ func (srv *Server) Exit() {
 		c.Exit()
 	}
 
-	lib.Debugf("SQS: messages lost %d", len(srv.recordsCh))
+	if len(srv.recordsCh) > 0 {
+		log.Printf("SQS: messages lost %d", len(srv.recordsCh))
+	}
 
 	// finishing the server
 	srv.done <- true
@@ -154,15 +173,7 @@ func (srv *Server) canSend() bool {
 }
 
 func (srv *Server) sendRecord(r *lib.InterRecord) {
-	if !srv.canSend() {
-		return
-	}
-
-	select {
-	case srv.recordsCh <- r:
-	default:
-		lib.Debugf("SQS: channel is full. Queued messages %d", len(srv.recordsCh))
-	}
+	srv.recordsCh <- r
 }
 
 func (srv *Server) sendBytes(b []byte) {
@@ -200,6 +211,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				continue
 			}
 			// Connection was closed
+			return
+		}
+
+		if !srv.canSend() {
+			respKO.WriteTo(netCon)
 			return
 		}
 
