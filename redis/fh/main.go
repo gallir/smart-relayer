@@ -166,10 +166,9 @@ func (srv *Server) sendRecord(r *lib.InterRecord) {
 }
 
 func (srv *Server) sendBytes(b []byte) {
-	r := &lib.InterRecord{
-		Types: 1,
-		Raw:   b,
-	}
+	r := lib.NewInterRecord()
+	r.Types = 1
+	r.Raw = b
 	srv.sendRecord(r)
 }
 
@@ -225,7 +224,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			srv.sendBytes(src)
 		case "MULTI":
 			multi = true
-			row = &lib.InterRecord{}
+			row = lib.NewInterRecord()
 		case "EXEC":
 			multi = false
 			srv.sendRecord(row)
@@ -235,7 +234,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if multi {
 				row.Add(k, v)
 			} else {
-				row = &lib.InterRecord{}
+				row = lib.NewInterRecord()
 				row.Add(k, v)
 				srv.sendRecord(row)
 			}
@@ -245,7 +244,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if multi {
 				row.Sadd(k, v)
 			} else {
-				row = &lib.InterRecord{}
+				row = lib.NewInterRecord()
 				row.Sadd(k, v)
 				srv.sendRecord(row)
 			}
@@ -255,9 +254,8 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			var v string
 
 			if !multi {
-				row = &lib.InterRecord{
-					Types: 0,
-				}
+				row = lib.NewInterRecord()
+				row.Types = 0
 			}
 
 			for i, o := range req.Items[1:] {

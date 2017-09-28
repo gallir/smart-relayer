@@ -10,31 +10,27 @@ import (
 )
 
 type InterRecord struct {
-	Types     int
-	Timestamp float64                `json:"_ts"`
-	Data      map[string]interface{} `json:"data"`
-	Raw       []byte                 // 0 json, 1 Raw bytes
+	Types     int                    `json:"type,omitempty"`
+	Timestamp float64                `json:"_ts,number"`
+	Data      map[string]interface{} `json:"data,omitempty"`
+	Raw       []byte                 `json:"raw,omitempty"` // 0 json, 1 Raw bytes
 }
 
-func (r *InterRecord) _make() {
-	if r.Data != nil {
-		return
+// NewInterRecord create a InterRecord struct to the connection
+func NewInterRecord() *InterRecord {
+	return &InterRecord{
+		Timestamp: float64(time.Now().UnixNano()) / float64(time.Nanosecond),
+		Data:      make(map[string]interface{}, 0),
 	}
-
-	r.Data = make(map[string]interface{}, 0)
 }
 
 func (r *InterRecord) Add(key, value string) {
-	r._make()
-
 	if _, ok := r.Data[key]; !ok {
 		r.Data[key] = value
 	}
 }
 
 func (r *InterRecord) Sadd(key, value string) {
-	r._make()
-
 	if _, ok := r.Data[key]; !ok {
 		r.Data[key] = make([]interface{}, 0)
 	}
@@ -43,8 +39,6 @@ func (r *InterRecord) Sadd(key, value string) {
 }
 
 func (r *InterRecord) Mhset(key, k string, v interface{}) {
-	r._make()
-
 	if _, ok := r.Data[key]; !ok {
 		r.Data[key] = make(map[string]interface{})
 	}
@@ -52,6 +46,7 @@ func (r *InterRecord) Mhset(key, k string, v interface{}) {
 	r.Data[key].(map[string]interface{})[k] = v
 }
 
+// Bytes return the record in bytes
 func (r *InterRecord) Bytes() []byte {
 	if r.Types != 0 {
 		return r.Raw
@@ -67,12 +62,14 @@ func (r *InterRecord) Bytes() []byte {
 	return buf
 }
 
+// BytesUniqID return the record content in bytes and the uniq ID
 func (r *InterRecord) BytesUniqID() ([]byte, string) {
 	buf := r.Bytes()
 	h := r.uniqID(buf)
 	return buf, h
 }
 
+// String return the record in string format
 func (r *InterRecord) String() string {
 	buf := r.Bytes()
 	defer ffjson.Pool(buf)
@@ -80,6 +77,7 @@ func (r *InterRecord) String() string {
 	return string(buf)
 }
 
+// StringUniqID build a uniq ID based on the content in string format
 func (r *InterRecord) StringUniqID() (string, string) {
 	buf := r.Bytes()
 	defer ffjson.Pool(buf)
@@ -88,6 +86,7 @@ func (r *InterRecord) StringUniqID() (string, string) {
 	return string(buf), h
 }
 
+// Len return the bytes used in Raw or the len of the map data
 func (r *InterRecord) Len() int {
 	if r.Types != 0 {
 		return len(r.Raw)
