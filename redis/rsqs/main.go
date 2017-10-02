@@ -23,14 +23,21 @@ type Server struct {
 	failing  bool
 	listener net.Listener
 	tries    int
+	mode     int
 
 	clients        []*Client
 	recordsCh      chan *lib.InterRecord
+	syncRecordCh   chan *syncRecord
 	awsSvc         *sqs.SQS
 	lastConnection time.Time
 	lastError      time.Time
 	errors         int64
 	fifo           bool
+}
+
+type syncRecord struct {
+	r      *lib.InterRecord
+	syncCh chan bool
 }
 
 const (
@@ -57,8 +64,6 @@ var (
 func init() {
 	commands = map[string]*redis.Resp{
 		"PING":   respOK,
-		"MULTI":  respOK,
-		"EXEC":   respOK,
 		"SET":    respOK,
 		"SADD":   respOK,
 		"HMSET":  respOK,
@@ -69,9 +74,10 @@ func init() {
 // New creates a new Redis local server
 func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
-		done:      done,
-		errors:    0,
-		recordsCh: make(chan *lib.InterRecord, requestBufferSize),
+		done:         done,
+		errors:       0,
+		recordsCh:    make(chan *lib.InterRecord, requestBufferSize),
+		syncRecordCh: make(chan *syncRecord, requestBufferSize),
 	}
 
 	srv.Reload(&c)
@@ -103,6 +109,8 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.fifo = false
 		srv.config.GroupID = ""
 	}
+
+	srv.mode = c.Type()
 
 	go srv.retry()
 
@@ -172,31 +180,18 @@ func (srv *Server) canSend() bool {
 	return true
 }
 
-func (srv *Server) sendRecord(r *lib.InterRecord) {
-	srv.recordsCh <- r
-}
-
-func (srv *Server) sendBytes(b []byte) {
-	r := lib.NewInterRecord()
-	r.Types = 1
-	r.Raw = b
-	srv.sendRecord(r)
-}
-
 func (srv *Server) handleConnection(netCon net.Conn) {
 
 	defer netCon.Close()
 
 	reader := redis.NewRespReader(netCon)
 
-	// Active transaction
-	multi := false
-
-	var row *lib.InterRecord
+	syncConn := &syncRecord{
+		syncCh: make(chan bool),
+		r:      &lib.InterRecord{},
+	}
 	defer func() {
-		if multi {
-			log.Println("SQS ERROR: MULTI closed before ending with EXEC")
-		}
+		close(syncConn.syncCh)
 	}()
 
 	for {
@@ -231,48 +226,29 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		}
 
 		switch req.Command {
+		case "PING":
+			fastResponse.WriteTo(netCon)
+			continue
 		case "RAWSET":
-			if multi || len(req.Items) > 2 {
+			if len(req.Items) > 2 {
 				respKO.WriteTo(netCon)
 				continue
 			}
 			src, _ := req.Items[1].Bytes()
-			srv.sendBytes(src)
-		case "MULTI":
-			multi = true
-			row = lib.NewInterRecord()
-		case "EXEC":
-			multi = false
-			srv.sendRecord(row)
+			syncConn.r.Types = 1
+			syncConn.r.Raw = src
 		case "SET":
 			k, _ := req.Items[1].Str()
 			v, _ := req.Items[2].Str()
-			if multi {
-				row.Add(k, v)
-			} else {
-				row = lib.NewInterRecord()
-				row.Add(k, v)
-				srv.sendRecord(row)
-			}
+			syncConn.r.Add(k, v)
 		case "SADD":
 			k, _ := req.Items[1].Str()
 			v, _ := req.Items[2].Str()
-			if multi {
-				row.Sadd(k, v)
-			} else {
-				row = lib.NewInterRecord()
-				row.Sadd(k, v)
-				srv.sendRecord(row)
-			}
+			syncConn.r.Sadd(k, v)
 		case "HMSET":
 			var key string
 			var k string
 			var v string
-
-			if !multi {
-				row = lib.NewInterRecord()
-				row.Types = 0
-			}
 
 			for i, o := range req.Items[1:] {
 				if i == 0 {
@@ -285,18 +261,26 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 					k, _ = o.Str()
 				} else {
 					v, _ = o.Str()
-					row.Mhset(key, k, v)
+					syncConn.r.Mhset(key, k, v)
 				}
 			}
-
-			if !multi {
-				srv.sendRecord(row)
-			}
-
 		}
 
-		fastResponse.WriteTo(netCon)
-		continue
+		// Smart mode, answer immediately and forget
+		if srv.mode == lib.ModeSmart {
+			srv.recordsCh <- syncConn.r
+			fastResponse.WriteTo(netCon)
+			continue
+		}
+
+		srv.syncRecordCh <- syncConn
+
+		b := <-syncConn.syncCh
+		if b == false {
+			respKO.WriteTo(netCon)
+		} else {
+			fastResponse.WriteTo(netCon)
+		}
 
 	}
 }

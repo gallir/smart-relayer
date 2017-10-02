@@ -2,6 +2,8 @@ package rsqs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -75,6 +77,28 @@ func (clt *Client) Reload() error {
 	return nil
 }
 
+func (clt *Client) append(r *lib.InterRecord) error {
+	s, id := r.StringUniqID()
+
+	// The maximum is 262,144 bytes (256 KB)
+	if len(s) >= maxRecordSize {
+		// Save in new record
+		e := fmt.Sprintf("SQS ERROR: the message is over %dKB can't be send", maxRecordSize/1024)
+		return errors.New(e)
+	}
+
+	m := &sqs.SendMessageBatchRequestEntry{}
+	m.SetId(id)
+	m.SetMessageBody(s)
+	if clt.srv.fifo {
+		m.SetMessageGroupId(clt.srv.config.GroupID)
+	}
+	clt.batch = append(clt.batch, m)
+
+	clt.batchSize += len(s)
+	return nil
+}
+
 func (clt *Client) listen() {
 	defer lib.Debugf("SQS client %d: Closed listener", clt.ID)
 
@@ -83,6 +107,21 @@ func (clt *Client) listen() {
 	for {
 
 		select {
+		case sr := <-clt.srv.syncRecordCh:
+			// ignore empty messages
+			if sr.r.Len() <= 0 {
+				continue
+			}
+
+			if clt.append(sr.r) != nil {
+				sr.syncCh <- false
+				continue
+			}
+
+			clt.flush()
+
+			sr.syncCh <- true
+
 		case r := <-clt.srv.recordsCh:
 			// ignore empty messages
 			if r.Len() <= 0 {
@@ -95,24 +134,7 @@ func (clt *Client) listen() {
 				clt.flush()
 			}
 
-			s, id := r.StringUniqID()
-
-			// The maximum is 262,144 bytes (256 KB)
-			if len(s) >= maxRecordSize {
-				// Save in new record
-				log.Printf("SQS ERROR: the message is over %dKB can't be send", maxRecordSize/1024)
-				continue
-			}
-
-			m := &sqs.SendMessageBatchRequestEntry{}
-			m.SetId(id)
-			m.SetMessageBody(s)
-			if clt.srv.fifo {
-				m.SetMessageGroupId(clt.srv.config.GroupID)
-			}
-			clt.batch = append(clt.batch, m)
-
-			clt.batchSize += len(s)
+			clt.append(r)
 
 		case <-clt.tick.C:
 			if time.Since(clt.lastFlushed) >= recordsTimeout && (len(clt.buff) > 0 || len(clt.batch) > 0) {
