@@ -92,7 +92,7 @@ func (r *InterRecord) Len() int {
 		return len(r.Raw)
 	}
 
-	return len(r.Data)
+	return len(r.Bytes())
 }
 
 func (r *InterRecord) uniqID(b []byte) string {

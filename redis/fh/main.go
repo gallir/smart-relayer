@@ -37,7 +37,7 @@ const (
 	connectionRetry     = 5 * time.Second
 	errorsFrame         = 10 * time.Second
 	maxErrors           = 10 // Limit of errors to restart the connection
-	connectTimeout      = 5 * time.Second
+	connectTimeout      = 15 * time.Second
 )
 
 var (
