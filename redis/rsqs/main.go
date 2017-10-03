@@ -188,7 +188,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 	syncConn := &syncRecord{
 		syncCh: make(chan bool),
-		r:      &lib.InterRecord{},
+		r:      lib.NewInterRecord(),
 	}
 	defer func() {
 		close(syncConn.syncCh)
