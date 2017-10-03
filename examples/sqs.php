@@ -50,12 +50,6 @@ for ($c = 1; $c<=$limit; $c++) {
 
         case "multi":
 
-            $response = phpiredis_command_bs($cli, array("MULTI"));
-            if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-                printf("Error in MULTI %s\n", $response);
-                exit(1);
-            }
-
             // SET
             $key = randString(5);
             $value = randString(10);
@@ -85,13 +79,6 @@ for ($c = 1; $c<=$limit; $c++) {
                     exit(1);
                 }
             }
-
-            $response = phpiredis_command_bs($cli, array("EXEC"));
-            if ($response != "OK" && ! (is_integer($response) && $response >= 0) ) {
-                printf("Error in EXEC %s\n", $response);
-                exit(1);
-            }
-
             break;
 
         default:
