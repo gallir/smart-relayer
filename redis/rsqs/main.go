@@ -1,13 +1,14 @@
-package fh
+package rsqs
 
 import (
 	"errors"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/service/firehose"
+	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
 )
@@ -21,23 +22,32 @@ type Server struct {
 	reseting bool
 	failing  bool
 	listener net.Listener
+	tries    int
+	mode     int
 
 	clients        []*Client
 	recordsCh      chan *lib.InterRecord
-	awsSvc         *firehose.Firehose
+	syncRecordCh   chan *syncRecord
+	awsSvc         *sqs.SQS
 	lastConnection time.Time
 	lastError      time.Time
 	errors         int64
+	fifo           bool
+}
+
+type syncRecord struct {
+	r      *lib.InterRecord
+	syncCh chan bool
 }
 
 const (
-	maxConnections      = 2
-	requestBufferSize   = 1024 * 10
+	maxConnections      = 1
+	requestBufferSize   = 10 * 2
 	maxConnectionsTries = 3
 	connectionRetry     = 5 * time.Second
 	errorsFrame         = 10 * time.Second
 	maxErrors           = 10 // Limit of errors to restart the connection
-	connectTimeout      = 15 * time.Second
+	connectTimeout      = 5 * time.Second
 )
 
 var (
@@ -54,8 +64,6 @@ var (
 func init() {
 	commands = map[string]*redis.Resp{
 		"PING":   respOK,
-		"MULTI":  respOK,
-		"EXEC":   respOK,
 		"SET":    respOK,
 		"SADD":   respOK,
 		"HMSET":  respOK,
@@ -66,9 +74,10 @@ func init() {
 // New creates a new Redis local server
 func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
-		done:      done,
-		errors:    0,
-		recordsCh: make(chan *lib.InterRecord, requestBufferSize),
+		done:         done,
+		errors:       0,
+		recordsCh:    make(chan *lib.InterRecord, requestBufferSize),
+		syncRecordCh: make(chan *syncRecord, requestBufferSize),
 	}
 
 	srv.Reload(&c)
@@ -86,6 +95,22 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	if srv.config.MaxConnections <= 0 {
 		srv.config.MaxConnections = maxConnections
 	}
+
+	if srv.config.MaxRecords <= 0 {
+		srv.config.MaxRecords = maxBatchRecords
+	}
+
+	if strings.HasSuffix(srv.config.URL, "fifo") {
+		srv.fifo = true
+		if srv.config.GroupID == "" {
+			srv.config.GroupID = srv.config.ListenHost()
+		}
+	} else {
+		srv.fifo = false
+		srv.config.GroupID = ""
+	}
+
+	srv.mode = c.Type()
 
 	go srv.retry()
 
@@ -110,14 +135,14 @@ func (srv *Server) Start() (e error) {
 			if e != nil {
 				if netErr, ok := e.(net.Error); ok && netErr.Timeout() {
 					// Paranoid, ignore timeout errors
-					log.Println("Firehose ERROR: timeout at local listener", srv.config.ListenHost(), e)
+					log.Println("SQS ERROR: timeout at local listener", srv.config.ListenHost(), e)
 					continue
 				}
 				if srv.exiting {
-					log.Println("Firehose: exiting local listener", srv.config.ListenHost())
+					log.Println("SQS: exiting local listener", srv.config.ListenHost())
 					return
 				}
-				log.Fatalln("Firehose ERROR: emergency error in local listener", srv.config.ListenHost(), e)
+				log.Fatalln("SQS ERROR: emergency error in local listener", srv.config.ListenHost(), e)
 				return
 			}
 			go srv.handleConnection(netConn)
@@ -139,7 +164,9 @@ func (srv *Server) Exit() {
 		c.Exit()
 	}
 
-	lib.Debugf("Firehose: messages lost %d", len(srv.recordsCh))
+	if len(srv.recordsCh) > 0 {
+		log.Printf("SQS: messages lost %d", len(srv.recordsCh))
+	}
 
 	// finishing the server
 	srv.done <- true
@@ -153,39 +180,18 @@ func (srv *Server) canSend() bool {
 	return true
 }
 
-func (srv *Server) sendRecord(r *lib.InterRecord) {
-	if !srv.canSend() {
-		return
-	}
-
-	select {
-	case srv.recordsCh <- r:
-	default:
-		lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.recordsCh))
-	}
-}
-
-func (srv *Server) sendBytes(b []byte) {
-	r := lib.NewInterRecord()
-	r.Types = 1
-	r.Raw = b
-	srv.sendRecord(r)
-}
-
 func (srv *Server) handleConnection(netCon net.Conn) {
 
 	defer netCon.Close()
 
 	reader := redis.NewRespReader(netCon)
 
-	// Active transaction
-	multi := false
-
-	var row *lib.InterRecord
+	syncConn := &syncRecord{
+		syncCh: make(chan bool),
+		r:      lib.NewInterRecord(),
+	}
 	defer func() {
-		if multi {
-			log.Println("Firehose ERROR: MULTI closed before ending with EXEC")
-		}
+		close(syncConn.syncCh)
 	}()
 
 	for {
@@ -195,10 +201,14 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if r.IsType(redis.IOErr) {
 			if redis.IsTimeout(r) {
 				// Paranoid, don't close it just log it
-				log.Println("Firehose: Local client listen timeout at", srv.config.Listen)
 				continue
 			}
 			// Connection was closed
+			return
+		}
+
+		if !srv.canSend() {
+			respKO.WriteTo(netCon)
 			return
 		}
 
@@ -215,48 +225,29 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		}
 
 		switch req.Command {
+		case "PING":
+			fastResponse.WriteTo(netCon)
+			continue
 		case "RAWSET":
-			if multi || len(req.Items) > 2 {
+			if len(req.Items) > 2 {
 				respKO.WriteTo(netCon)
 				continue
 			}
 			src, _ := req.Items[1].Bytes()
-			srv.sendBytes(src)
-		case "MULTI":
-			multi = true
-			row = lib.NewInterRecord()
-		case "EXEC":
-			multi = false
-			srv.sendRecord(row)
+			syncConn.r.Types = 1
+			syncConn.r.Raw = src
 		case "SET":
 			k, _ := req.Items[1].Str()
 			v, _ := req.Items[2].Str()
-			if multi {
-				row.Add(k, v)
-			} else {
-				row = lib.NewInterRecord()
-				row.Add(k, v)
-				srv.sendRecord(row)
-			}
+			syncConn.r.Add(k, v)
 		case "SADD":
 			k, _ := req.Items[1].Str()
 			v, _ := req.Items[2].Str()
-			if multi {
-				row.Sadd(k, v)
-			} else {
-				row = lib.NewInterRecord()
-				row.Sadd(k, v)
-				srv.sendRecord(row)
-			}
+			syncConn.r.Sadd(k, v)
 		case "HMSET":
 			var key string
 			var k string
 			var v string
-
-			if !multi {
-				row = lib.NewInterRecord()
-				row.Types = 0
-			}
 
 			for i, o := range req.Items[1:] {
 				if i == 0 {
@@ -269,18 +260,26 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 					k, _ = o.Str()
 				} else {
 					v, _ = o.Str()
-					row.Mhset(key, k, v)
+					syncConn.r.Mhset(key, k, v)
 				}
 			}
-
-			if !multi {
-				srv.sendRecord(row)
-			}
-
 		}
 
-		fastResponse.WriteTo(netCon)
-		continue
+		// Smart mode, answer immediately and forget
+		if srv.mode == lib.ModeSmart {
+			srv.recordsCh <- syncConn.r
+			fastResponse.WriteTo(netCon)
+			continue
+		}
+
+		srv.syncRecordCh <- syncConn
+
+		b := <-syncConn.syncCh
+		if b == false {
+			respKO.WriteTo(netCon)
+		} else {
+			fastResponse.WriteTo(netCon)
+		}
 
 	}
 }
