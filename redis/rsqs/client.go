@@ -100,8 +100,6 @@ func (clt *Client) append(r *lib.InterRecord) error {
 }
 
 func (clt *Client) listen() {
-	defer lib.Debugf("SQS client %d: Closed listener", clt.ID)
-
 	clt.status = 1
 
 	for {
@@ -141,7 +139,6 @@ func (clt *Client) listen() {
 				clt.flush()
 			}
 		case <-clt.done:
-			lib.Debugf("SQS client %d: closing..", clt.ID)
 			clt.finish <- true
 			return
 		}

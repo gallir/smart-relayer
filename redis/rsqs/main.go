@@ -201,7 +201,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if r.IsType(redis.IOErr) {
 			if redis.IsTimeout(r) {
 				// Paranoid, don't close it just log it
-				log.Println("SQS: Local client listen timeout at", srv.config.Listen)
 				continue
 			}
 			// Connection was closed
