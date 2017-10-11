@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/firehose"
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/redis"
 )
 
 const (
@@ -100,6 +101,15 @@ func (clt *Client) listen() {
 				continue
 			}
 
+			var content []byte
+			if clt.srv.config.Compress {
+				content = compress.Bytes(r.Bytes())
+				lib.Debugf("Snappy: %d/%d", recordSize, len(content))
+				recordSize = len(content)
+			} else {
+				content = r.Bytes()
+			}
+
 			if recordSize+1 >= maxBatchSize {
 				lib.Debugf("Firehose client %d: EFRROR: one record is over the limit %d/%d", clt.ID, recordSize, maxBatchSize)
 				continue
@@ -120,7 +130,7 @@ func (clt *Client) listen() {
 				clt.buff = pool.Get().([]byte)
 			}
 
-			clt.buff = append(clt.buff, r.Bytes()...)
+			clt.buff = append(clt.buff, content...)
 			clt.buff = append(clt.buff, newLine...)
 
 			clt.count++
