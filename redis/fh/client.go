@@ -103,10 +103,12 @@ func (clt *Client) listen() {
 
 			var content []byte
 			if clt.srv.config.Compress {
+				// All the message will be compress. This will work with raw and json messages.
 				content = compress.Bytes(r.Bytes())
-				lib.Debugf("Snappy: %d/%d", recordSize, len(content))
+				// Update the record size using the compression []byte result
 				recordSize = len(content)
 			} else {
+				// Just store the bytes
 				content = r.Bytes()
 			}
 
