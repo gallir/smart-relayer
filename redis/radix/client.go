@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gallir/radix.improved/redis"
@@ -18,7 +19,8 @@ type Client struct {
 	sync.Mutex
 	config             lib.RelayerConfig
 	mode               int
-	ready              bool
+	ready              int32
+	connected          int32
 	conn               net.Conn
 	buf                *lib.NetBuffedReadWriter
 	requestChan        chan *lib.Request // The relayer sends the requests via this channel
@@ -36,8 +38,9 @@ func NewClient(c *lib.RelayerConfig) lib.RelayerClient {
 	clt.Reload(c)
 
 	clt.requestChan = make(chan *lib.Request, requestBufferSize)
-	clt.ready = true
+	clt.setReady(true)
 	go clt.listen(clt.requestChan)
+	clt.connect()
 	lib.Debugf("Client %s for target %s ready", clt.config.Listen, clt.config.Host())
 
 	return clt
@@ -47,11 +50,41 @@ func (clt *Client) Reload(c *lib.RelayerConfig) {
 	clt.Lock()
 	defer clt.Unlock()
 
-	if clt.ready {
+	if clt.isReady() {
 		clt.flush(true)
 	}
 	clt.config = *c
 	clt.mode = clt.config.Type()
+}
+
+func (clt *Client) setReady(s bool) {
+	if s {
+		atomic.StoreInt32(&clt.ready, 1)
+	} else {
+		atomic.StoreInt32(&clt.ready, 0)
+	}
+}
+
+func (clt *Client) isReady() bool {
+	if atomic.LoadInt32(&clt.ready) == 1 {
+		return true
+	}
+	return false
+}
+
+func (clt *Client) setConnected(s bool) {
+	if s {
+		atomic.StoreInt32(&clt.connected, 1)
+	} else {
+		atomic.StoreInt32(&clt.connected, 0)
+	}
+}
+
+func (clt *Client) isConnected() bool {
+	if atomic.LoadInt32(&clt.connected) == 1 {
+		return true
+	}
+	return false
 }
 
 func (clt *Client) connect() bool {
@@ -60,7 +93,7 @@ func (clt *Client) connect() bool {
 
 	if clt.failures > 10 {
 		// The pool manager will see we are invalid and kill us
-		clt.ready = false
+		clt.setReady(false)
 		return false
 	}
 	if clt.lastConnectFailure.Add(200 * time.Millisecond).After(time.Now()) {
@@ -84,16 +117,27 @@ func (clt *Client) connect() bool {
 	clt.buf = lib.NewNetReadWriter(conn, time.Duration(clt.config.Timeout)*time.Second, 0)
 
 	go clt.netListener(clt.buf, clt.queueChan)
+	clt.setConnected(true)
 
 	return true
 }
 
 // Listen for clients' messages from the requestChan
 func (clt *Client) listen(ch chan *lib.Request) {
-	defer log.Println("Finished Redis client")
+	defer lib.Debugf("Finished Redis client")
 	defer func() {
-		clt.disconnect()
-		clt.ready = false
+		clt.setReady(false)
+	}()
+
+	timer := time.NewTimer(maxIdle)
+	defer func() {
+		// Clean timer gracefully
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
 	}()
 
 	for {
@@ -109,18 +153,20 @@ func (clt *Client) listen(ch chan *lib.Request) {
 				sendAsyncResponse(req.ResponseChannel, respKO)
 				clt.disconnect()
 			}
-		case <-time.After(maxIdle):
+			timer.Stop()
+			timer.Reset(maxIdle)
+		case <-timer.C:
 			if clt.conn != nil {
 				lib.Debugf("Closing by idle %s", clt.config.Host())
 				clt.disconnect()
 			}
 		}
 	}
-
 }
 
 // This goroutine listens for incoming answers from the Redis server
 func (clt *Client) netListener(buf io.ReadWriter, queue chan *lib.Request) {
+	lib.Debugf("Net listener started")
 	reader := redis.NewRespReader(buf)
 	for req := range queue {
 		r := reader.Read()
@@ -159,7 +205,7 @@ func (clt *Client) purgeRequests() {
 }
 
 func (clt *Client) write(r *lib.Request) (int64, error) {
-	if clt.conn == nil && !clt.connect() {
+	if !clt.isConnected() && !clt.connect() {
 		return 0, fmt.Errorf("Connection failed")
 	}
 
@@ -230,6 +276,7 @@ func (clt *Client) disconnect() {
 	clt.Lock()
 	defer clt.Unlock()
 
+	clt.setConnected(false)
 	if clt.queueChan != nil {
 		clt.purgeRequests()
 		close(clt.queueChan)
@@ -250,18 +297,16 @@ func (clt *Client) Exit() {
 	clt.Lock()
 	defer clt.Unlock()
 
-	clt.ready = false
+	clt.setReady(false)
 	if clt.requestChan != nil {
 		close(clt.requestChan)
 		clt.requestChan = nil
 	}
 }
 
+// IsValid is used for pool management, it ignores disconnect clients
 func (clt *Client) IsValid() bool {
-	clt.Lock()
-	defer clt.Unlock()
-
-	return clt.ready
+	return clt.isReady() && clt.isConnected()
 }
 
 func (clt *Client) Send(req interface{}) (e error) {
@@ -279,7 +324,7 @@ func (clt *Client) Send(req interface{}) (e error) {
 		return errKO
 	}
 
-	if !clt.ready {
+	if !clt.isReady() {
 		lib.Debugf("Client not ready %s", clt.config.Host())
 		return errKO
 	}

@@ -24,7 +24,7 @@ type RelayerConfig struct {
 	Listen             string // Local url | also is streamName for Kinesis Firehose
 	URL                string // Redis/SQS url endpoint
 	MaxConnections     int    // Pool management
-	MaxIdleConnections int    // Pool managemente
+	MaxIdleConnections int    // Pool management
 	Compress           bool
 	Uncompress         bool
 	Parallel           bool // For redis-cluster, send parallel requests

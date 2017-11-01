@@ -28,7 +28,7 @@ const (
 	requestBufferSize = 1024
 	listenTimeout     = 0 * time.Second // Don't timeout on local clients
 	connectTimeout    = 5 * time.Second
-	maxIdle           = 15 * time.Second
+	maxIdle           = 120 * time.Second
 	selectCommand     = "SELECT"
 )
 
@@ -147,13 +147,8 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	defer netCon.Close()
 
 	reader := redis.NewRespReader(netCon)
-	pooled, ok := srv.pool.Get()
-	if !ok {
-		log.Println("Redis server, no clients available from pool")
-		return
-	}
-	defer srv.pool.Close(pooled)
-	client := pooled.Client
+	client := srv.pool.Get()
+	defer srv.pool.Close(client)
 	responseCh := make(chan *redis.Resp, 1)
 	defer close(responseCh)
 
