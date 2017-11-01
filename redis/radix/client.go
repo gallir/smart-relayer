@@ -40,7 +40,6 @@ func NewClient(c *lib.RelayerConfig) lib.RelayerClient {
 	clt.requestChan = make(chan *lib.Request, requestBufferSize)
 	clt.setReady(true)
 	go clt.listen(clt.requestChan)
-	clt.connect()
 	lib.Debugf("Client %s for target %s ready", clt.config.Listen, clt.config.Host())
 
 	return clt
@@ -140,6 +139,7 @@ func (clt *Client) listen(ch chan *lib.Request) {
 		}
 	}()
 
+	clt.connect()
 	for {
 		select {
 		case req, more := <-ch:
