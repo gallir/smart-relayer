@@ -101,6 +101,12 @@ func (p *Pool) Close(e lib.RelayerClient) {
 		return
 	}
 
+	// Don't insert it if it's disconnected or not valid
+	if !e.IsValid() {
+		e.Exit()
+		return
+	}
+
 	select {
 	case p.free <- e:
 	default:
