@@ -167,6 +167,8 @@ func (clt *Client) listen(ch chan *lib.Request) {
 // This goroutine listens for incoming answers from the Redis server
 func (clt *Client) netListener(buf io.ReadWriter, queue chan *lib.Request) {
 	lib.Debugf("Net listener started")
+	defer clt.close() // Will force to close net connection
+
 	reader := redis.NewRespReader(buf)
 	for req := range queue {
 		r := reader.Read()
@@ -272,6 +274,7 @@ func (clt *Client) flush(force bool) error {
 	return nil
 }
 
+// Start disconnection
 func (clt *Client) disconnect() {
 	clt.Lock()
 	defer clt.Unlock()
@@ -282,6 +285,16 @@ func (clt *Client) disconnect() {
 		close(clt.queueChan)
 		clt.queueChan = nil
 	}
+	clt.database = 0
+}
+
+// Close connection
+func (clt *Client) close() {
+	if clt.isConnected() {
+		clt.disconnect() // Double check
+	}
+	clt.Lock()
+	defer clt.Unlock()
 
 	if clt.conn != nil {
 		clt.buf.Flush()
@@ -289,8 +302,6 @@ func (clt *Client) disconnect() {
 		clt.conn.Close()
 		clt.conn = nil
 	}
-
-	clt.database = 0
 }
 
 func (clt *Client) Exit() {
@@ -299,6 +310,7 @@ func (clt *Client) Exit() {
 
 	clt.setReady(false)
 	if clt.requestChan != nil {
+		// Closing the request channel triggers all disconnections
 		close(clt.requestChan)
 		clt.requestChan = nil
 	}
