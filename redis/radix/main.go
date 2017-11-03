@@ -183,7 +183,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if ok {
 				e := client.Send(req)
 				if e != nil {
-					// log.Println("Error sending", srv.config.Host(), e)
 					redis.NewResp(e).WriteTo(netCon)
 					continue
 				}
@@ -197,7 +196,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 		e := client.Send(req)
 		if e != nil {
-			// log.Println("Error sending", srv.config.Host(), e)
 			redis.NewResp(e).WriteTo(netCon)
 			continue
 		}

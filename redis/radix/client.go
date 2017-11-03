@@ -217,21 +217,11 @@ func (clt *Client) write(r *lib.Request) (int64, error) {
 		}
 		clt.database = r.Database
 	} else if clt.database != r.Database {
-		changer := redis.NewResp([]interface{}{
-			selectCommand,
-			fmt.Sprintf("%d", r.Database),
-		})
-		_, err := changer.WriteTo(clt.buf)
+		err := clt.changeDB(r.Database)
 		if err != nil {
-			log.Println("Error changing database", err)
 			clt.disconnect()
-			return 0, fmt.Errorf("Error in select")
-		}
-		err = clt.flush(false)
-		if err != nil {
 			return 0, err
 		}
-		clt.database = r.Database
 		clt.queueChan <- nil
 	}
 
@@ -258,6 +248,26 @@ func (clt *Client) write(r *lib.Request) (int64, error) {
 	clt.queueChan <- r
 	return c, err
 }
+
+func (clt *Client) changeDB(db int) (err error) {
+	changer := redis.NewResp([]interface{}{
+		selectCommand,
+		fmt.Sprintf("%d", db),
+	})
+	_, err = changer.WriteTo(clt.buf)
+	if err != nil {
+		log.Println("Error changing database", err)
+		return
+	}
+	err = clt.flush(false)
+	if err != nil {
+		return
+	}
+	clt.database = db
+	return
+
+}
+
 func (clt *Client) flush(force bool) error {
 	if force || clt.config.Pipeline == 0 && clt.pipelined >= clt.config.Pipeline || len(clt.requestChan) == 0 {
 		err := clt.buf.Flush()
