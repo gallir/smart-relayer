@@ -1,4 +1,4 @@
-package pool
+package redis2
 
 import (
 	"log"
@@ -7,47 +7,44 @@ import (
 	"github.com/gallir/smart-relayer/lib"
 )
 
-type CreateFunction func(*lib.RelayerConfig) lib.RelayerClient
+type CreateFunction func(*lib.RelayerConfig) *Client
 
 // Pool keep a list of clients' elements
 type Pool struct {
 	sync.Mutex
-	cf      CreateFunction
 	config  lib.RelayerConfig
-	free    chan lib.RelayerClient
+	free    chan *Client
 	maxIdle int
 }
 
 // New returns a new pool manager
-func New(c *lib.RelayerConfig, cf CreateFunction) (p *Pool) {
-	p = &Pool{
-		cf: cf,
-	}
-	p.ReadConfig(c)
+func NewPool(cfg *lib.RelayerConfig) (p *Pool) {
+	p = &Pool{}
+	p.ReadConfig(cfg)
 	return
 }
 
-func (p *Pool) ReadConfig(c *lib.RelayerConfig) {
+func (p *Pool) ReadConfig(cfg *lib.RelayerConfig) {
 	p.Lock()
 	defer p.Unlock()
 
-	maxIdle := c.MaxIdleConnections
+	maxIdle := cfg.MaxIdleConnections
 	if maxIdle == 0 {
 		maxIdle = 1
 	}
 
 	if p.free != nil {
 		if maxIdle != p.maxIdle {
-			ch := make(chan lib.RelayerClient, maxIdle)
+			ch := make(chan *Client, maxIdle)
 		LOOP:
 			for {
 				select {
-				case e := <-p.free:
+				case c := <-p.free:
 					select {
-					case ch <- e:
-						e.Reload(c)
+					case ch <- c:
+						c.Reload(cfg)
 					default:
-						e.Exit()
+						c.Exit()
 					}
 				default:
 					break LOOP
@@ -57,60 +54,62 @@ func (p *Pool) ReadConfig(c *lib.RelayerConfig) {
 			p.free = ch
 		}
 	} else {
-		p.free = make(chan lib.RelayerClient, maxIdle)
+		p.free = make(chan *Client, maxIdle)
 	}
 
 	p.maxIdle = maxIdle
-	p.config = *c
+	p.config = *cfg
 }
 
 func (p *Pool) Reset() {
 	p.Lock()
 	defer p.Unlock()
 
-	for e := range p.free {
-		e.Exit()
+	for c := range p.free {
+		c.Exit()
 	}
 }
 
-func (p *Pool) Get() (e lib.RelayerClient) {
+// Get return a client from the pool or creates a new one
+func (p *Pool) Get() (c *Client) {
 LOOP:
-	for e == nil {
+	for c == nil {
 		select {
-		case c := <-p.free:
-			if !c.IsValid() {
-				c.Exit()
+		case item := <-p.free:
+			if !item.IsValid() {
+				item.Exit()
 				lib.Debugf("Error in client, ignoring it")
 				continue
 			}
-			e = c
+			c = item
 		default:
 			break LOOP
 		}
 	}
 
-	if e == nil {
+	if c == nil {
 		lib.Debugf("Pool: created new client")
-		e = p.cf(&p.config)
+		c = NewClient(&p.config)
 	}
 	return
 }
 
-func (p *Pool) Close(e lib.RelayerClient) {
-	if e == nil {
+// Close stores a client in the idle pool if still valid
+func (p *Pool) Close(c *Client) {
+	if c == nil {
 		return
 	}
 
 	// Don't insert it if it's disconnected or not valid
-	if !e.IsValid() {
-		e.Exit()
+	if !c.IsValid() {
+		c.Exit()
 		return
 	}
 
 	select {
-	case p.free <- e:
+	case p.free <- c:
 	default:
 		lib.Debugf("Pool: exceeded limit %d/%d", len(p.free), p.maxIdle)
-		e.Exit()
+		c.Exit()
 	}
 }

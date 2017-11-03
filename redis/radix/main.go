@@ -9,14 +9,13 @@ import (
 
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
-	"github.com/gallir/smart-relayer/redis/pool"
 )
 
 // Server is the thread that listen for clients' connections
 type Server struct {
 	sync.Mutex
 	config   lib.RelayerConfig
-	pool     *pool.Pool
+	pool     *Pool
 	mode     int
 	done     chan bool
 	exiting  bool
@@ -125,7 +124,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 			log.Printf("Reset redis server at port %s for target %s", srv.config.Listen, srv.config.Host())
 			srv.pool.Reset()
 		}
-		srv.pool = pool.New(c, NewClient)
+		srv.pool = NewPool(c)
 	} else {
 		log.Printf("Reload redis config at port %s for target %s", srv.config.Listen, srv.config.Host())
 		srv.pool.ReadConfig(c)

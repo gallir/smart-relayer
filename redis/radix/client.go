@@ -33,7 +33,7 @@ type Client struct {
 }
 
 // NewClient creates a new client that connect to a Redis server
-func NewClient(c *lib.RelayerConfig) lib.RelayerClient {
+func NewClient(c *lib.RelayerConfig) *Client {
 	clt := &Client{}
 	clt.Reload(c)
 
