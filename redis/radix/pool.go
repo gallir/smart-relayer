@@ -94,8 +94,8 @@ LOOP:
 	return
 }
 
-// Close stores a client in the idle pool if still valid
-func (p *Pool) Close(c *Client) {
+// Put stores a client in the idle pool if still valid
+func (p *Pool) Put(c *Client) {
 	if c == nil {
 		return
 	}

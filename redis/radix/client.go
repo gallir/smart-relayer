@@ -39,12 +39,13 @@ func NewClient(c *lib.RelayerConfig) *Client {
 
 	clt.requestChan = make(chan *lib.Request, requestBufferSize)
 	clt.setReady(true)
-	go clt.listen(clt.requestChan)
+	go clt.requestListener(clt.requestChan)
 	lib.Debugf("Client %s for target %s ready", clt.config.Listen, clt.config.Host())
 
 	return clt
 }
 
+// Reload initialize teh configuration
 func (clt *Client) Reload(c *lib.RelayerConfig) {
 	clt.Lock()
 	defer clt.Unlock()
@@ -115,14 +116,14 @@ func (clt *Client) connect() bool {
 	clt.queueChan = make(chan *lib.Request, requestBufferSize)
 	clt.buf = lib.NewNetReadWriter(conn, time.Duration(clt.config.Timeout)*time.Second, 0)
 
-	go clt.netListener(clt.buf, clt.queueChan)
+	go clt.redisListener(clt.buf, clt.queueChan)
 	clt.setConnected(true)
 
 	return true
 }
 
 // Listen for clients' messages from the requestChan
-func (clt *Client) listen(ch chan *lib.Request) {
+func (clt *Client) requestListener(ch chan *lib.Request) {
 	defer lib.Debugf("Finished Redis client")
 	defer func() {
 		clt.setReady(false)
@@ -165,7 +166,7 @@ func (clt *Client) listen(ch chan *lib.Request) {
 }
 
 // This goroutine listens for incoming answers from the Redis server
-func (clt *Client) netListener(buf io.ReadWriter, queue chan *lib.Request) {
+func (clt *Client) redisListener(buf io.ReadWriter, queue chan *lib.Request) {
 	lib.Debugf("Net listener started")
 	defer clt.close() // Will force to close net connection
 
@@ -314,6 +315,7 @@ func (clt *Client) close() {
 	}
 }
 
+// Exit closes the connection and destroy all the client resources
 func (clt *Client) Exit() {
 	clt.Lock()
 	defer clt.Unlock()
@@ -331,7 +333,8 @@ func (clt *Client) IsValid() bool {
 	return clt.isReady() && clt.isConnected()
 }
 
-func (clt *Client) Send(req interface{}) (e error) {
+// send sends a request to Redis through the requestChan
+func (clt *Client) send(req interface{}) (e error) {
 	r := req.(*lib.Request)
 	defer func() {
 		r := recover() // To avoid panic due to closed channels

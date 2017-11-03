@@ -147,7 +147,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 	reader := redis.NewRespReader(netCon)
 	client := srv.pool.Get()
-	defer srv.pool.Close(client)
+	defer srv.pool.Put(client)
 	responseCh := make(chan *redis.Resp, 1)
 	defer close(responseCh)
 
@@ -180,7 +180,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if srv.mode == lib.ModeSmart {
 			fastResponse, ok := commands[req.Command]
 			if ok {
-				e := client.Send(req)
+				e := client.send(req)
 				if e != nil {
 					redis.NewResp(e).WriteTo(netCon)
 					continue
@@ -193,7 +193,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		// Synchronized mode
 		req.ResponseChannel = responseCh
 
-		e := client.Send(req)
+		e := client.send(req)
 		if e != nil {
 			redis.NewResp(e).WriteTo(netCon)
 			continue
