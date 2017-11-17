@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	libdebug "runtime/debug"
+
 	"sync"
 
 	"github.com/gallir/smart-relayer/lib"
@@ -57,6 +59,12 @@ func startOrReload() bool {
 	if err != nil {
 		log.Println("Bad configuration", err)
 		return false
+	}
+
+	if newConf.GOGC > 100 {
+		libdebug.SetGCPercent(newConf.GOGC)
+	} else {
+		libdebug.SetGCPercent(100)
 	}
 
 	newEndpoints := make(map[string]bool)

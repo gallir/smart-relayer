@@ -15,6 +15,7 @@ const (
 
 type Config struct {
 	Comment string
+	GOGC    int //GCPercent
 	Relayer []RelayerConfig
 }
 
