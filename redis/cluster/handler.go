@@ -3,7 +3,7 @@ package cluster
 import (
 	"net"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
@@ -14,13 +14,14 @@ const (
 )
 
 type connHandler struct {
-	sync.Mutex
-	seq    uint64
-	last   uint64
-	srv    *Server
-	conn   net.Conn
-	reqCh  chan reqData
-	respCh chan *redis.Resp
+	initialized bool
+	seq         uint64
+	last        uint64
+	srv         *Server
+	conn        net.Conn
+	reqCh       chan reqData
+	respCh      chan *redis.Resp
+	pending     int32
 }
 
 func Handle(srv *Server, netCon net.Conn) {
@@ -29,8 +30,6 @@ func Handle(srv *Server, netCon net.Conn) {
 		conn: netCon,
 	}
 	defer h.close()
-
-	h.init()
 
 	reader := redis.NewRespReader(h.conn)
 	for {
@@ -51,12 +50,6 @@ func Handle(srv *Server, netCon net.Conn) {
 	}
 }
 
-func (h *connHandler) init() {
-	h.reqCh = make(chan reqData, requestBufferSize)
-	h.respCh = make(chan *redis.Resp, 1)
-	go h.sender()
-}
-
 func (h *connHandler) close() {
 	if h.reqCh != nil {
 		close(h.reqCh)
@@ -68,8 +61,8 @@ func (h *connHandler) close() {
 
 }
 
-func (h *connHandler) process(m *redis.Resp) *redis.Resp {
-	cmd, err := m.First()
+func (h *connHandler) process(req *redis.Resp) *redis.Resp {
+	cmd, err := req.First()
 	if err != nil || strings.ToUpper(cmd) == selectCommand {
 		return respBadCommand
 	}
@@ -81,43 +74,63 @@ func (h *connHandler) process(m *redis.Resp) *redis.Resp {
 	}
 
 	if doAsync {
+		atomic.AddInt32(&h.pending, 1)
+		if !h.initialized {
+			h.initialized = true
+			h.reqCh = make(chan reqData, requestBufferSize)
+			h.respCh = make(chan *redis.Resp, 1)
+			go h.sendWorker()
+		}
 		h.reqCh <- reqData{
-			req:      m,
+			req:      req,
 			compress: h.srv.config.Compress,
 		}
 		return fastResponse
 	}
 
-	h.reqCh <- reqData{
-		req:      m,
-		compress: h.srv.config.Compress,
-		answerCh: h.respCh,
+	p := atomic.LoadInt32(&h.pending)
+	if p != 0 {
+		// There are operations in queue, send by the same channel
+		h.reqCh <- reqData{
+			req:      req,
+			compress: h.srv.config.Compress,
+			answerCh: h.respCh,
+		}
+		return <-h.respCh
 	}
-	return <-h.respCh
+
+	// No ongoing operations, we can send directly
+	resp := h.sender(req, h.srv.config.Compress)
+	return resp
+
 }
 
-func (h *connHandler) sender() {
+func (h *connHandler) sendWorker() {
 	for m := range h.reqCh {
-		if m.compress {
-			m.req.Compress(lib.MinCompressSize, lib.MagicSnappy)
-		}
-		a, err := m.req.Array()
-		if err != nil {
-			if m.answerCh != nil {
-				m.answerCh <- respBadCommand
-			}
-		}
-		cmd, _ := a[0].Str()
-		args := make([]interface{}, 0, len(a)-1)
-		for _, v := range a {
-			b, _ := v.Bytes()
-			args = append(args, b)
-		}
-
-		m.resp = h.srv.pool.Cmd(cmd, args[1:])
+		resp := h.sender(m.req, m.compress)
 		if m.answerCh != nil {
-			m.answerCh <- m.resp
+			atomic.AddInt32(&h.pending, -1)
+			m.answerCh <- resp
 		}
-		m.req.ReleaseBuffers()
 	}
+}
+
+func (h *connHandler) sender(req *redis.Resp, compress bool) *redis.Resp {
+	if compress {
+		req.Compress(lib.MinCompressSize, lib.MagicSnappy)
+	}
+	a, err := req.Array()
+	if err != nil {
+		return respBadCommand
+	}
+	cmd, _ := a[0].Str()
+	args := make([]interface{}, 0, len(a)-1)
+	for _, v := range a {
+		b, _ := v.Bytes()
+		args = append(args, b)
+	}
+
+	resp := h.srv.pool.Cmd(cmd, args[1:])
+	req.ReleaseBuffers()
+	return resp
 }
