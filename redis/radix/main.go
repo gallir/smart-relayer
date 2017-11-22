@@ -24,7 +24,7 @@ type Server struct {
 
 const (
 	connectionRetries = 3
-	requestBufferSize = 1024
+	requestBufferSize = 32
 	listenTimeout     = 0 * time.Second // Don't timeout on local clients
 	connectTimeout    = 5 * time.Second
 	maxIdle           = 120 * time.Second

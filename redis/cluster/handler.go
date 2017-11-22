@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	requestBufferSize = 64
+	requestBufferSize = 32
 )
 
 type connHandler struct {
@@ -100,22 +100,21 @@ func (h *connHandler) process(req *redis.Resp) *redis.Resp {
 	}
 
 	// No ongoing operations, we can send directly
-	resp := h.sender(req, h.srv.config.Compress)
+	resp := h.sender(req, h.srv.config.Compress, false)
 	return resp
 
 }
 
 func (h *connHandler) sendWorker() {
 	for m := range h.reqCh {
-		resp := h.sender(m.req, m.compress)
+		resp := h.sender(m.req, m.compress, true)
 		if m.answerCh != nil {
-			atomic.AddInt32(&h.pending, -1)
 			m.answerCh <- resp
 		}
 	}
 }
 
-func (h *connHandler) sender(req *redis.Resp, compress bool) *redis.Resp {
+func (h *connHandler) sender(req *redis.Resp, compress, async bool) *redis.Resp {
 	if compress {
 		req.Compress(lib.MinCompressSize, lib.MagicSnappy)
 	}
@@ -131,6 +130,9 @@ func (h *connHandler) sender(req *redis.Resp, compress bool) *redis.Resp {
 	}
 
 	resp := h.srv.pool.Cmd(cmd, args[1:])
+	if async {
+		atomic.AddInt32(&h.pending, -1)
+	}
 	req.ReleaseBuffers()
 	return resp
 }
