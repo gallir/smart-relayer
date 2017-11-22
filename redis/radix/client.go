@@ -11,7 +11,6 @@ import (
 
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
-	"github.com/gallir/smart-relayer/redis"
 )
 
 // Client is the thread that connect to the remote redis server
@@ -149,6 +148,7 @@ func (clt *Client) requestListener(ch chan *lib.Request) {
 				return
 			}
 			_, err := clt.write(req)
+			req.Resp.ReleaseBuffers()
 			if err != nil {
 				log.Println("Error writing:", clt.config.Host(), err)
 				sendAsyncResponse(req.ResponseChannel, respKO)
@@ -189,7 +189,7 @@ func (clt *Client) redisListener(buf io.ReadWriter, queue chan *lib.Request) {
 		}
 
 		if clt.config.Compress || clt.config.Uncompress {
-			r = compress.UResp(r)
+			r.Uncompress(lib.MagicSnappy)
 		}
 		sendAsyncResponse(req.ResponseChannel, r)
 	}
@@ -228,13 +228,11 @@ func (clt *Client) write(r *lib.Request) (int64, error) {
 
 	resp := r.Resp
 	if clt.config.Compress {
-		items, ok := compress.Items(r.Items)
-		if ok {
-			resp = redis.NewResp(items)
-		}
+		resp.Compress(lib.MinCompressSize, lib.MagicSnappy)
 	}
 
 	c, err := resp.WriteTo(clt.buf)
+
 	if err != nil {
 		lib.Debugf("Failed in write: %s", err)
 		clt.disconnect()

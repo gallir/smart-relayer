@@ -14,9 +14,10 @@ const (
 )
 
 type Config struct {
-	Comment string
-	GOGC    int //GCPercent
-	Relayer []RelayerConfig
+	Comment        string
+	GOGC           int //GCPercent
+	Relayer        []RelayerConfig
+	BufferPoolSize int // If > 0 it will use bybufferpools in redis.Resp if size > BufferPoolSize
 }
 
 type RelayerConfig struct {
@@ -28,9 +29,9 @@ type RelayerConfig struct {
 	MaxIdleConnections int    // Pool management
 	Compress           bool
 	Uncompress         bool
-	Parallel           bool // For redis-cluster, send parallel requests
-	Pipeline           int  // If > 0 it does pipelining (buffering)
-	Timeout            int  // Timeout in seconds to wait for responses from the server
+	//	Parallel           bool // For redis-cluster, send parallel requests
+	Pipeline int // If > 0 it does pipelining (buffering)
+	Timeout  int // Timeout in seconds to wait for responses from the server
 
 	MaxRecords int     // To send in batch to Kinesis
 	StreamName string  // Kinesis/Firehose stream name

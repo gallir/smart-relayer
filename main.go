@@ -13,6 +13,7 @@ import (
 
 	"sync"
 
+	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/cluster"
 	"github.com/gallir/smart-relayer/redis/fh"
@@ -21,7 +22,7 @@ import (
 )
 
 const (
-	version = "7.0.2"
+	version = "8.0.1"
 )
 
 var (
@@ -63,8 +64,14 @@ func startOrReload() bool {
 
 	if newConf.GOGC > 100 {
 		libdebug.SetGCPercent(newConf.GOGC)
+		log.Println("Set GCPercent to", newConf.GOGC)
 	} else {
 		libdebug.SetGCPercent(100)
+	}
+
+	redis.UsePool = newConf.BufferPoolSize
+	if redis.UsePool > 0 {
+		log.Println("Set UsePool to", redis.UsePool)
 	}
 
 	newEndpoints := make(map[string]bool)

@@ -28,9 +28,7 @@ type Server struct {
 }
 
 type reqData struct {
-	seq      uint64
-	cmd      string
-	args     []*redis.Resp
+	req      *redis.Resp
 	compress bool
 	answerCh chan *redis.Resp
 	resp     *redis.Resp
@@ -98,11 +96,6 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	}
 	srv.config = *c // Save a copy
 	srv.mode = c.Type()
-
-	if srv.mode == lib.ModeSync {
-		// Don't allow parallel with async, it's a waste of CPU's cycles
-		srv.config.Parallel = false
-	}
 
 	if srv.config.Protocol == "redis-cluster" {
 		return srv.reloadCluster(reset)

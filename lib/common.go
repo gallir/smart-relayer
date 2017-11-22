@@ -21,8 +21,15 @@ type MainConfig struct {
 	ShowVersion    bool
 }
 
-// GlobalConfig is the configuration for the main programm
-var GlobalConfig MainConfig
+const (
+	MinCompressSize = 256
+)
+
+var (
+	// GlobalConfig is the configuration for the main programm
+	GlobalConfig MainConfig
+	MagicSnappy  = []byte("$sy$")
+)
 
 func init() {
 	flag.StringVar(&GlobalConfig.ConfigFileName, "c", "relayer.conf", "Configuration filename")

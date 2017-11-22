@@ -4,13 +4,9 @@ import (
 	"net"
 	"strings"
 	"sync"
-	"sync/atomic"
-
-	"container/heap"
 
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
-	"github.com/gallir/smart-relayer/redis"
 )
 
 const (
@@ -19,15 +15,12 @@ const (
 
 type connHandler struct {
 	sync.Mutex
-	seq        uint64
-	last       uint64
-	pQueue     seqRespHeap // Priority queue for the responses
-	srv        *Server
-	conn       net.Conn
-	reqCh      chan *reqData
-	respCh     chan *redis.Resp
-	senders    int32
-	maxSenders int
+	seq    uint64
+	last   uint64
+	srv    *Server
+	conn   net.Conn
+	reqCh  chan reqData
+	respCh chan *redis.Resp
 }
 
 func Handle(srv *Server, netCon net.Conn) {
@@ -51,29 +44,17 @@ func Handle(srv *Server, netCon net.Conn) {
 
 		resp := h.process(req)
 		if h.srv.config.Compress || h.srv.config.Uncompress {
-			resp = compress.UResp(resp)
+			resp.Uncompress(lib.MagicSnappy)
 		}
 		resp.WriteTo(h.conn)
+		resp.ReleaseBuffers()
 	}
 }
 
 func (h *connHandler) init() {
-	h.reqCh = make(chan *reqData, requestBufferSize)
+	h.reqCh = make(chan reqData, requestBufferSize)
 	h.respCh = make(chan *redis.Resp, 1)
-	if h.srv.config.Parallel {
-		h.maxSenders = h.srv.config.MaxIdleConnections/2 + 1
-		h.pQueue = make(seqRespHeap, 0, h.maxSenders)
-		heap.Init(&h.pQueue)
-	} else {
-		h.maxSenders = 1
-	}
-	h.newSender()
-}
-
-func (h *connHandler) newSender() {
-	if h.senders < int32(h.maxSenders) {
-		go h.sender()
-	}
+	go h.sender()
 }
 
 func (h *connHandler) close() {
@@ -88,22 +69,9 @@ func (h *connHandler) close() {
 }
 
 func (h *connHandler) process(m *redis.Resp) *redis.Resp {
-	ms, err := m.Array()
-	if err != nil || len(ms) < 1 {
-		return respBadCommand
-	}
-
-	cmd, err := ms[0].Str()
+	cmd, err := m.First()
 	if err != nil || strings.ToUpper(cmd) == selectCommand {
 		return respBadCommand
-	}
-
-	h.seq++ //atomic.AddUint64(&h.seq, 1),
-	data := &reqData{
-		seq:      h.seq,
-		cmd:      cmd,
-		args:     ms[1:],
-		compress: h.srv.config.Compress,
 	}
 
 	doAsync := false
@@ -113,74 +81,43 @@ func (h *connHandler) process(m *redis.Resp) *redis.Resp {
 	}
 
 	if doAsync {
-		h.reqCh <- data
+		h.reqCh <- reqData{
+			req:      m,
+			compress: h.srv.config.Compress,
+		}
 		return fastResponse
 	}
 
-	data.answerCh = h.respCh
-	h.reqCh <- data
+	h.reqCh <- reqData{
+		req:      m,
+		compress: h.srv.config.Compress,
+		answerCh: h.respCh,
+	}
 	return <-h.respCh
 }
 
 func (h *connHandler) sender() {
-	atomic.AddInt32(&h.senders, 1)
-	defer atomic.AddInt32(&h.senders, -1)
-
 	for m := range h.reqCh {
-		// Add senders if there are pending requests
-		if h.srv.config.Parallel && len(h.reqCh) > 0 {
-			h.newSender()
+		if m.compress {
+			m.req.Compress(lib.MinCompressSize, lib.MagicSnappy)
 		}
-		args := make([]interface{}, len(m.args))
-		for i, arg := range m.args {
-			args[i] = arg
-			if m.compress {
-				b, e := arg.Bytes()
-				if e == nil && len(b) > compress.MinCompressSize {
-					args[i] = compress.Bytes(b)
-				}
+		a, err := m.req.Array()
+		if err != nil {
+			if m.answerCh != nil {
+				m.answerCh <- respBadCommand
 			}
 		}
-
-		if h.srv.config.Parallel {
-			h.parallel(m, args)
-			continue
+		cmd, _ := a[0].Str()
+		args := make([]interface{}, 0, len(a)-1)
+		for _, v := range a {
+			b, _ := v.Bytes()
+			args = append(args, b)
 		}
 
-		m.resp = h.srv.pool.Cmd(m.cmd, args...)
+		m.resp = h.srv.pool.Cmd(cmd, args[1:])
 		if m.answerCh != nil {
 			m.answerCh <- m.resp
 		}
+		m.req.ReleaseBuffers()
 	}
-}
-
-// This function ensures the responses are returned ordered
-// using a priority queue when several goroutines are used for
-// sending requests in parallel to the redis server. It DOES NOT
-// ensure that the request were executed in order, a GET still
-// can return (nil) before a previous SET is processed.
-// But anyway, the computation cost is not high and may serve
-// to improve behaviour in heavy clients that send a lot of data
-// to the server.
-// WARN: you've warned, think twice and use the "parallel" option
-// only if you are sure.
-func (h *connHandler) parallel(m *reqData, args []interface{}) {
-	h.Lock()
-	heap.Push(&h.pQueue, m)
-	h.Unlock()
-
-	m.resp = h.srv.pool.Cmd(m.cmd, args...)
-
-	h.Lock()
-	for h.pQueue.Len() > 0 {
-		item := heap.Pop(&h.pQueue).(*reqData)
-		if item.resp == nil {
-			heap.Push(&h.pQueue, item)
-			break
-		}
-		if item.answerCh != nil {
-			item.answerCh <- item.resp
-		}
-	}
-	h.Unlock()
 }

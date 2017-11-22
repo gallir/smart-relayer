@@ -203,9 +203,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if !more {
 			// The client has closed the channel
 			lib.Debugf("Redis client has closed channel, exiting")
+			response.ReleaseBuffers()
 			return
 		}
 		response.WriteTo(netCon)
+		response.ReleaseBuffers()
 	}
 }
 
