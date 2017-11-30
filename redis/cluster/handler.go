@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	requestBufferSize = 32
+	requestBufferSize = 1024
 )
 
 type connHandler struct {
@@ -74,13 +74,13 @@ func (h *connHandler) process(req *redis.Resp) *redis.Resp {
 	}
 
 	if doAsync {
-		atomic.AddInt32(&h.pending, 1)
 		if !h.initialized {
 			h.initialized = true
 			h.reqCh = make(chan reqData, requestBufferSize)
 			h.respCh = make(chan *redis.Resp, 1)
 			go h.sendWorker()
 		}
+		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
 			req:      req,
 			compress: h.srv.config.Compress,
@@ -91,6 +91,7 @@ func (h *connHandler) process(req *redis.Resp) *redis.Resp {
 	p := atomic.LoadInt32(&h.pending)
 	if p != 0 {
 		// There are operations in queue, send by the same channel
+		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
 			req:      req,
 			compress: h.srv.config.Compress,
@@ -122,6 +123,7 @@ func (h *connHandler) sender(req *redis.Resp, compress, async bool) *redis.Resp 
 	if err != nil {
 		return respBadCommand
 	}
+
 	cmd, _ := a[0].Str()
 	args := make([]interface{}, 0, len(a)-1)
 	for _, v := range a {
