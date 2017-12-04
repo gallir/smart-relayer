@@ -28,10 +28,9 @@ type Server struct {
 }
 
 type reqData struct {
-	req      *redis.Resp
-	compress bool
-	answerCh chan *redis.Resp
-	resp     *redis.Resp
+	req        *redis.Resp
+	compress   bool
+	mustAnswer bool
 }
 
 const (

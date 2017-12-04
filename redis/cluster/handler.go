@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"fmt"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -41,12 +42,7 @@ func Handle(srv *Server, netCon net.Conn) {
 			return
 		}
 
-		resp := h.process(req)
-		if h.srv.config.Compress || h.srv.config.Uncompress {
-			resp.Uncompress(lib.MagicSnappy)
-		}
-		resp.WriteTo(h.conn)
-		resp.ReleaseBuffers()
+		h.process(req)
 	}
 }
 
@@ -61,10 +57,10 @@ func (h *connHandler) close() {
 
 }
 
-func (h *connHandler) process(req *redis.Resp) *redis.Resp {
+func (h *connHandler) process(req *redis.Resp) {
 	cmd, err := req.First()
 	if err != nil || strings.ToUpper(cmd) == selectCommand {
-		return respBadCommand
+		respBadCommand.WriteTo(h.conn)
 	}
 
 	doAsync := false
@@ -77,15 +73,16 @@ func (h *connHandler) process(req *redis.Resp) *redis.Resp {
 		if !h.initialized {
 			h.initialized = true
 			h.reqCh = make(chan reqData, requestBufferSize)
-			h.respCh = make(chan *redis.Resp, 1)
 			go h.sendWorker()
 		}
 		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
-			req:      req,
-			compress: h.srv.config.Compress,
+			req:        req,
+			compress:   h.srv.config.Compress,
+			mustAnswer: false,
 		}
-		return fastResponse
+		fastResponse.WriteTo(h.conn)
+		return
 	}
 
 	p := atomic.LoadInt32(&h.pending)
@@ -93,35 +90,33 @@ func (h *connHandler) process(req *redis.Resp) *redis.Resp {
 		// There are operations in queue, send by the same channel
 		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
-			req:      req,
-			compress: h.srv.config.Compress,
-			answerCh: h.respCh,
+			req:        req,
+			compress:   h.srv.config.Compress,
+			mustAnswer: true,
 		}
-		return <-h.respCh
+		return
 	}
 
 	// No ongoing operations, we can send directly
-	resp := h.sender(req, h.srv.config.Compress, false)
-	return resp
-
+	h.sender(true, req, h.srv.config.Compress, false)
 }
 
 func (h *connHandler) sendWorker() {
 	for m := range h.reqCh {
-		resp := h.sender(m.req, m.compress, true)
-		if m.answerCh != nil {
-			m.answerCh <- resp
-		}
+		h.sender(m.mustAnswer, m.req, m.compress, true)
 	}
 }
 
-func (h *connHandler) sender(req *redis.Resp, compress, async bool) *redis.Resp {
+func (h *connHandler) sender(mustAnswer bool, req *redis.Resp, compress, async bool) {
 	if compress {
 		req.Compress(lib.MinCompressSize, lib.MagicSnappy)
 	}
 	a, err := req.Array()
 	if err != nil {
-		return respBadCommand
+		if mustAnswer {
+			respBadCommand.WriteTo(h.conn)
+		}
+		return
 	}
 
 	cmd, _ := a[0].Str()
@@ -132,9 +127,17 @@ func (h *connHandler) sender(req *redis.Resp, compress, async bool) *redis.Resp 
 	}
 
 	resp := h.srv.pool.Cmd(cmd, args[1:])
+
+	if h.srv.config.Compress || h.srv.config.Uncompress {
+		resp.Uncompress(lib.MagicSnappy)
+	}
+	if mustAnswer {
+		fmt.Println("answer", resp)
+		resp.WriteTo(h.conn)
+	}
 	if async {
 		atomic.AddInt32(&h.pending, -1)
 	}
 	req.ReleaseBuffers()
-	return resp
+	resp.ReleaseBuffers()
 }
