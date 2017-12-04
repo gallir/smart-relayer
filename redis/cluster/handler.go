@@ -15,12 +15,9 @@ const (
 
 type connHandler struct {
 	initialized bool
-	seq         uint64
-	last        uint64
 	srv         *Server
 	conn        net.Conn
 	reqCh       chan reqData
-	respCh      chan *redis.Resp
 	pending     int32
 }
 
@@ -49,11 +46,7 @@ func (h *connHandler) close() {
 	if h.reqCh != nil {
 		close(h.reqCh)
 	}
-	if h.respCh != nil {
-		close(h.respCh)
-	}
 	h.conn.Close()
-
 }
 
 func (h *connHandler) process(req *redis.Resp) {
