@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"io"
 	"strings"
 
 	"github.com/gallir/radix.improved/redis"
@@ -13,11 +14,11 @@ const (
 
 // Request stores the data for each client request
 type Request struct {
-	Resp            *redis.Resp
-	Items           []*redis.Resp
-	Command         string
-	ResponseChannel chan *redis.Resp // Channel to send the response to the original client
-	Database        int              // The current database at the time the request was issued
+	Resp     *redis.Resp
+	Items    []*redis.Resp
+	Command  string
+	Conn     io.Writer // Writer to send the response to the original client
+	Database int       // The current database at the time the request was issued
 }
 
 func NewRequest(resp *redis.Resp, c *RelayerConfig) *Request {

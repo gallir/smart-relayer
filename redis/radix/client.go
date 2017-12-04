@@ -151,7 +151,9 @@ func (clt *Client) requestListener(ch chan *lib.Request) {
 			req.Resp.ReleaseBuffers()
 			if err != nil {
 				log.Println("Error writing:", clt.config.Host(), err)
-				sendAsyncResponse(req.ResponseChannel, respKO)
+				if req.Conn != nil {
+					respKO.WriteTo(req.Conn)
+				}
 				clt.disconnect()
 			}
 			timer.Stop()
@@ -183,7 +185,9 @@ func (clt *Client) redisListener(buf io.ReadWriter, queue chan *lib.Request) {
 			} else {
 				log.Printf("Error with server %s connection: %s", clt.config.Host(), r.Err)
 			}
-			sendAsyncResponse(req.ResponseChannel, respKO) // Send back and error immediately
+			if req.Conn != nil {
+				respKO.WriteTo(req.Conn)
+			}
 			clt.disconnect()
 			return
 		}
@@ -191,7 +195,10 @@ func (clt *Client) redisListener(buf io.ReadWriter, queue chan *lib.Request) {
 		if clt.config.Compress || clt.config.Uncompress {
 			r.Uncompress(lib.MagicSnappy)
 		}
-		sendAsyncResponse(req.ResponseChannel, r)
+		if req.Conn != nil {
+			r.WriteTo(req.Conn)
+		}
+		r.ReleaseBuffers()
 	}
 	lib.Debugf("Net listener exiting")
 }
@@ -200,7 +207,9 @@ func (clt *Client) purgeRequests() {
 	for {
 		select {
 		case req := <-clt.queueChan:
-			sendAsyncResponse(req.ResponseChannel, respKO)
+			if req.Conn != nil {
+				respKO.WriteTo(req.Conn)
+			}
 		default:
 			return
 		}
@@ -239,7 +248,7 @@ func (clt *Client) write(r *lib.Request) (int64, error) {
 		return 0, err
 	}
 
-	err = clt.flush(r.ResponseChannel != nil) // Force flush if it's an sync command
+	err = clt.flush(r.Conn != nil) // Force flush if it's an sync command
 	if err != nil {
 		return 0, err
 	}

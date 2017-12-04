@@ -148,8 +148,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	reader := redis.NewRespReader(netCon)
 	client := srv.pool.Get()
 	defer srv.pool.Put(client)
-	responseCh := make(chan *redis.Resp, 1)
-	defer close(responseCh)
 
 	currentDB := 0
 
@@ -191,23 +189,13 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		}
 
 		// Synchronized mode
-		req.ResponseChannel = responseCh
+		req.Conn = netCon
 
 		e := client.send(req)
 		if e != nil {
 			redis.NewResp(e).WriteTo(netCon)
 			continue
 		}
-
-		response, more := <-responseCh
-		if !more {
-			// The client has closed the channel
-			lib.Debugf("Redis client has closed channel, exiting")
-			response.ReleaseBuffers()
-			return
-		}
-		response.WriteTo(netCon)
-		response.ReleaseBuffers()
 	}
 }
 
@@ -227,27 +215,4 @@ func sendRequest(c chan *lib.Request, r *lib.Request) (ok bool) {
 
 	c <- r
 	return true
-}
-
-func sendAsyncResponse(c chan *redis.Resp, r *redis.Resp) (ok bool) {
-	defer func() {
-		e := recover() // To avoid panic due to closed channels
-		if e != nil {
-			log.Printf("AsyncResponseyncRequest: Recovered from error %s, channel length %d", e, len(c))
-			ok = false
-		}
-	}()
-
-	if c == nil {
-		return
-	}
-
-	select {
-	case c <- r:
-		ok = true
-	default:
-		lib.Debugf("Error sending response to channel length %d", len(c))
-		ok = false
-	}
-	return
 }
