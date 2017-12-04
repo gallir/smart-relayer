@@ -1,7 +1,6 @@
 package cluster
 
 import (
-	"fmt"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -132,7 +131,6 @@ func (h *connHandler) sender(mustAnswer bool, req *redis.Resp, compress, async b
 		resp.Uncompress(lib.MagicSnappy)
 	}
 	if mustAnswer {
-		fmt.Println("answer", resp)
 		resp.WriteTo(h.conn)
 	}
 	if async {
