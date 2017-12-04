@@ -62,6 +62,7 @@ func (h *connHandler) process(req *redis.Resp) {
 	}
 
 	if doAsync {
+		fastResponse.WriteTo(h.conn)
 		if !h.initialized {
 			h.initialized = true
 			h.reqCh = make(chan reqData, requestBufferSize)
@@ -73,7 +74,6 @@ func (h *connHandler) process(req *redis.Resp) {
 			compress:   h.srv.config.Compress,
 			mustAnswer: false,
 		}
-		fastResponse.WriteTo(h.conn)
 		return
 	}
 

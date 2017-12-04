@@ -178,12 +178,8 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if srv.mode == lib.ModeSmart {
 			fastResponse, ok := commands[req.Command]
 			if ok {
-				e := client.send(req)
-				if e != nil {
-					redis.NewResp(e).WriteTo(netCon)
-					continue
-				}
 				fastResponse.WriteTo(netCon)
+				client.send(req)
 				continue
 			}
 		}
