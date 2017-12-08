@@ -141,10 +141,6 @@ func (r *InterRecord) Bytes() []byte {
 		return nil
 	}
 
-	if len(buf) >= 1000*1024 {
-		Debugf("Big message: %s", string(buf))
-	}
-
 	return buf
 }
 
