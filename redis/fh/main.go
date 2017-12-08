@@ -87,12 +87,13 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	}
 
 	fhConfig := firehosePool.Config{
-		Profile:    srv.config.Profile,
-		Region:     srv.config.Region,
-		StreamName: srv.config.StreamName,
-		Workers:    srv.config.MaxConnections,
-		MaxRecords: srv.config.MaxRecords,
-		Buffer:     requestBufferSize,
+		Profile:       srv.config.Profile,
+		Region:        srv.config.Region,
+		StreamName:    srv.config.StreamName,
+		Workers:       srv.config.MaxConnections,
+		MaxRecords:    srv.config.MaxRecords,
+		Buffer:        requestBufferSize,
+		ConcatRecords: srv.config.Concat,
 	}
 
 	if srv.fh == nil {

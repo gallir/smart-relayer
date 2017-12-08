@@ -79,14 +79,8 @@ func (r *InterRecord) Bytes() []byte {
 
 	// Collect the buffers to be recycled after generate the JSON
 	var buffs []*bytebufferpool.ByteBuffer
-	defer func() {
-		if len(buffs) > 0 {
-			for _, b := range buffs {
-				compressPool.Put(b)
-			}
-		}
-	}()
 
+	// Interal function for compress
 	comp := func(o []byte) []byte {
 		// Get a buffer from the pool
 		b := compressPool.Get()
@@ -106,6 +100,15 @@ func (r *InterRecord) Bytes() []byte {
 
 		return b.B
 	}
+
+	// After generate the JSON send the buffer to the pool
+	defer func() {
+		if len(buffs) > 0 {
+			for _, b := range buffs {
+				compressPool.Put(b)
+			}
+		}
+	}()
 
 	if r.compressFields {
 		for k, v := range r.Data {
