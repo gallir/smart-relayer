@@ -266,7 +266,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				row.Sadd(k, v)
 				srv.sendRecord(row)
 			}
-		case "HMSET", "CMHSET":
+		case "HMSET", "CHMSET":
 			var key string
 			var k string
 			var v interface{}
@@ -286,7 +286,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				if i%2 != 0 {
 					k, _ = o.Str()
 				} else {
-					if req.Command == "CMHSET" {
+					if req.Command == "CHMSET" {
 						v, _ = o.Bytes()
 					} else {
 						v, _ = o.Str()

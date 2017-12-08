@@ -2,7 +2,6 @@ package lib
 
 import (
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"sync"
@@ -19,38 +18,10 @@ var compressPool = &bytebufferpool.Pool{}
 // Pool for gzip
 var gzipPool = sync.Pool{
 	New: func() interface{} {
-		return gzip.NewWriter(ioutil.Discard)
+		w, _ := gzip.NewWriterLevel(ioutil.Discard, gzip.BestCompression)
+		return w
 	},
 }
-
-func gzipGet(b io.Writer) *gzip.Writer {
-	w := gzipPool.Get().(*gzip.Writer)
-	// Reset the compressor linking with the new buffer, ready to use
-	w.Reset(b)
-	return w
-}
-
-func gzipPut(g *gzip.Writer) {
-	g.Close()
-	// Unlink the buffer for the gzip, just in case
-	g.Reset(ioutil.Discard)
-	gzipPool.Put(g)
-}
-
-// // Pool for InterRecord
-// var interRecordPool = sync.Pool{
-// 	New: func() interface{} {
-// 		return NewInterRecord()
-// 	},
-// }
-
-// func InterRecordGet() *InterRecord {
-// 	return interRecordPool.Get().(*InterRecord)
-// }
-
-// func InterRecordPut(r *InterRecord) {
-// 	interRecordPool.Put(r)
-// }
 
 type InterRecord struct {
 	Types          int                    `json:"type,omitempty"`
@@ -116,23 +87,47 @@ func (r *InterRecord) Bytes() []byte {
 		}
 	}()
 
+	comp := func(o []byte) []byte {
+		// Get a buffer from the pool
+		b := compressPool.Get()
+		// append to an slice of bytesbuffers to be recycled (check the defer some upper lines)
+		buffs = append(buffs, b)
+
+		// Get a gzip from the pull, write in the buffer and return to the pool
+		w := gzipPool.Get().(*gzip.Writer)
+		// Reset the compressor linking with the new buffer
+		w.Reset(b)
+		w.Write(o)
+		w.Close()
+
+		// Unlink the buffer for the gzip before return to the pool, just in case..?
+		w.Reset(ioutil.Discard)
+		gzipPool.Put(w)
+
+		return b.B
+	}
+
 	if r.compressFields {
 		for k, v := range r.Data {
 			switch o := v.(type) {
 			case []byte:
-
-				// Get a buffer from the pool and append to the buffs to be recycled (check the defer some upper lines)
-				b := compressPool.Get()
-				buffs = append(buffs, b)
-
-				// Get a gzip from the pull, write in the buffer and return to the pool
-				// NOTE: the Reset and Close instruction is called in the gzipGet and gzipPut functions
-				w := gzipGet(b)
-				w.Write(o)
-				gzipPut(w)
-
-				r.Data[k] = b.B
-
+				r.Data[k] = comp(o)
+			case []interface{}:
+				for _, iv := range o {
+					switch o := iv.(type) {
+					case []byte:
+						iv = comp(o)
+					default:
+					}
+				}
+			case map[string]interface{}:
+				for _, iv := range o {
+					switch o := iv.(type) {
+					case []byte:
+						iv = comp(o)
+					default:
+					}
+				}
 			default:
 				// No changes
 			}
@@ -144,6 +139,10 @@ func (r *InterRecord) Bytes() []byte {
 		ffjson.Pool(buf)
 		log.Printf("Error in ffjson: %s", err)
 		return nil
+	}
+
+	if len(buf) >= 1000*1024 {
+		Debugf("Big message: %s", string(buf))
 	}
 
 	return buf
