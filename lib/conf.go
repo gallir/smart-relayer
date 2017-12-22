@@ -34,6 +34,7 @@ type RelayerConfig struct {
 	Timeout  int // Timeout in seconds to wait for responses from the server
 
 	MaxRecords int    // To send in batch to Kinesis
+	Buffer     int    // Size for the channel (queue for Kinesis/Firehose)
 	StreamName string // Kinesis/Firehose stream name
 	GroupID    string // Group ID for AWS SQS fifo
 	Region     string // AWS region
