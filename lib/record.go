@@ -15,8 +15,8 @@ import (
 
 var compressPool = &bytebufferpool.Pool{}
 
-// Pool for gzip
-var gzipPool = sync.Pool{
+// GzipPool is Pool for gzip
+var GzipPool = sync.Pool{
 	New: func() interface{} {
 		w, _ := gzip.NewWriterLevel(ioutil.Discard, gzip.BestCompression)
 		return w
@@ -88,7 +88,7 @@ func (r *InterRecord) Bytes() []byte {
 		buffs = append(buffs, b)
 
 		// Get a gzip from the pull, write in the buffer and return to the pool
-		w := gzipPool.Get().(*gzip.Writer)
+		w := GzipPool.Get().(*gzip.Writer)
 		// Reset the compressor linking with the new buffer
 		w.Reset(b)
 		w.Write(o)
@@ -96,7 +96,7 @@ func (r *InterRecord) Bytes() []byte {
 
 		// Unlink the buffer for the gzip before return to the pool, just in case..?
 		w.Reset(ioutil.Discard)
-		gzipPool.Put(w)
+		GzipPool.Put(w)
 
 		return b.B
 	}

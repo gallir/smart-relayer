@@ -40,6 +40,7 @@ type RelayerConfig struct {
 	Region     string // AWS region
 	Profile    string // AWS Profile name
 	Concat     bool   // Kinesis/Firehose contact messages, valid just for S3 backend
+	Path       string // Path were to store the logs
 }
 
 func ReadConfig(filename string) (config *Config, err error) {

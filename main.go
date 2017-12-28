@@ -19,10 +19,11 @@ import (
 	"github.com/gallir/smart-relayer/redis/fh"
 	"github.com/gallir/smart-relayer/redis/radix"
 	"github.com/gallir/smart-relayer/redis/rsqs"
+	"github.com/gallir/smart-relayer/redis/stream"
 )
 
 const (
-	version = "8.1.0"
+	version = "9.0.0-dev"
 )
 
 var (
@@ -36,6 +37,7 @@ var (
 )
 
 func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
+	lib.Debugf("%#v", conf)
 	switch conf.Protocol {
 	case "redis", "redis2":
 		srv, err = redis2.New(conf, done)
@@ -45,6 +47,8 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 		srv, err = fh.New(conf, done)
 	case "sqs":
 		srv, err = rsqs.New(conf, done)
+	case "stream":
+		srv, err = stream.New(conf, done)
 	default:
 		err = errors.New("no valid option")
 	}
@@ -73,6 +77,8 @@ func startOrReload() bool {
 	if redis.UsePool > 0 {
 		log.Println("Set UsePool to", redis.UsePool)
 	}
+
+	lib.Debugf("%#v", newConf.Relayer)
 
 	newEndpoints := make(map[string]bool)
 
