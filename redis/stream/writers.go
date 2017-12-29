@@ -45,7 +45,7 @@ func (w *writer) listen() {
 }
 
 func (w *writer) writeTo(m *Msg) error {
-	w.dirName = m.path()
+	w.dirName = m.fullpath()
 	if err := os.MkdirAll(w.dirName, os.ModePerm); err != nil {
 		log.Printf("File ERROR: %s", err)
 		return err

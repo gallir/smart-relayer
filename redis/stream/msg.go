@@ -1,8 +1,14 @@
 package stream
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -11,7 +17,6 @@ import (
 	"github.com/gallir/radix.improved/redis"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
@@ -26,15 +31,14 @@ var (
 )
 
 const (
-	ext       = "log"
-	indexName = "index.idx"
+	ext = "log"
 )
 
-func getMsg(base *string) *Msg {
+func getMsg(srv *Server) *Msg {
 	m := msgPool.Get().(*Msg)
 	m.t = time.Now()
 	m.b = msgBytesPool.Get()
-	m.base = base
+	m.srv = srv
 	return m
 }
 
@@ -42,32 +46,26 @@ func putMsg(m *Msg) {
 	msgBytesPool.Put(m.b)
 	m.b = nil
 	m.k = ""
-	m.base = nil
 	msgPool.Put(m)
 }
 
 type Msg struct {
-	t    time.Time
-	k    string
-	b    *bytebufferpool.ByteBuffer
-	base *string
-	s3   bool
+	t   time.Time
+	k   string
+	b   *bytebufferpool.ByteBuffer
+	srv *Server
+}
+
+func (m *Msg) fullpath() string {
+	return m.srv.fullpath(m.t)
 }
 
 func (m *Msg) path() string {
-	return fmt.Sprintf("%s/%d/%d/%d/%d/%d", *m.base, m.t.Year(), m.t.Month(), m.t.Day(), m.t.Hour(), m.t.Minute())
+	return m.srv.path(m.t)
 }
 
 func (m *Msg) filename() string {
 	return fmt.Sprintf("%d-%s.%s", m.t.Unix(), m.k, ext)
-}
-
-func (m *Msg) index() string {
-	return fmt.Sprintf("%d/%d/%d/%d/%s", m.t.Year(), m.t.Month(), m.t.Day(), m.t.Hour(), indexName)
-}
-
-func (m *Msg) indexFile() string {
-	return fmt.Sprintf("%s/%s", *m.base, m.index())
 }
 
 func (m *Msg) parse(r []*redis.Resp) (err error) {
@@ -92,9 +90,9 @@ func (m *Msg) parse(r []*redis.Resp) (err error) {
 
 func (m *Msg) Bytes() (b []byte, err error) {
 
-	if b, err = m.bytesFile(); err == nil {
-		return b, err
-	}
+	// if b, err = m.bytesFile(); err == nil {
+	// 	return b, err
+	// }
 
 	b, err = m.bytesS3()
 	return b, err
@@ -102,7 +100,7 @@ func (m *Msg) Bytes() (b []byte, err error) {
 
 func (m *Msg) bytesFile() ([]byte, error) {
 	// Build the path + filename
-	filename := fmt.Sprintf("%s/%s", m.path(), m.filename())
+	filename := fmt.Sprintf("%s/%s", m.fullpath(), m.filename())
 
 	file, err := os.Open(filename)
 	if err != nil {
@@ -116,30 +114,20 @@ func (m *Msg) bytesFile() ([]byte, error) {
 }
 
 func (m *Msg) bytesS3() ([]byte, error) {
-	// Specify profile to load for the session's config
-	sess, _ := session.NewSessionWithOptions(session.Options{
-		Profile: "dotw",
-		Config: aws.Config{
-			Region: aws.String("eu-west-1"),
-		},
-	})
 
-	return m.findIndex(sess)
-}
+	downloader := s3manager.NewDownloader(m.srv.s3sess)
 
-func (m *Msg) findIndex(sess *session.Session) ([]byte, error) {
-	downloader := s3manager.NewDownloader(sess)
-
-	file, err := os.OpenFile(m.indexFile(), os.O_CREATE, 0444)
+	file, err := ioutil.TempFile("", "logs-download")
 	if err != nil {
 		return nil, err
 	}
+	defer os.Remove(file.Name())
 	defer file.Close()
 
 	_, err = downloader.Download(file,
 		&s3.GetObjectInput{
-			Bucket: aws.String("dotw-testing-nfs-logs"), // Required
-			Key:    aws.String(m.index()),               // Required
+			Bucket: &m.srv.config.S3Bucket,                               // Required
+			Key:    aws.String(fmt.Sprintf("%s/records-1.gz", m.path())), // Required
 		})
 	if err != nil {
 		return nil, err
@@ -147,8 +135,79 @@ func (m *Msg) findIndex(sess *session.Session) ([]byte, error) {
 
 	file.Seek(0, 0)
 
-	var b []byte
-	b, err = ioutil.ReadAll(file)
+	r, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
 
-	return b, err
+	b := bytebufferpool.Get()
+	buf := make([]byte, 4096)
+	keyFound := false
+
+	unix := ""
+	key := ""
+
+	for {
+		if _, err := r.Read(buf); err != nil {
+			if keyFound {
+				if err == io.EOF {
+					b.Write(buf)
+					break
+				}
+				return nil, err
+			}
+			return nil, errors.New("Key not found")
+		}
+
+		// Check new line
+	N:
+		if bytes.Contains(buf, newLine) {
+			i := bytes.IndexByte(buf, newLine[0])
+			if keyFound {
+				b.Write(buf[0:i])
+				break
+			}
+			buf = buf[i+1:]
+
+			// Go to check "newLine" again
+			goto N
+		}
+
+		// Check again "sep"
+	S:
+		if bytes.Contains(buf, sep) && !keyFound {
+
+			iu := bytes.IndexByte(buf, sep[0])
+			if unix == "" && key == "" {
+				unix = string(buf[0:iu])
+			} else if unix != "" && key == "" {
+				key = string(buf[0:iu])
+			}
+			buf = buf[iu+1:]
+
+			if unix != "" && key != "" {
+
+				if key == m.k {
+					keyFound = true
+				}
+
+				unix = ""
+				key = ""
+				// Go to check "newLine" again
+				goto N
+			}
+
+			// Go to check "sep" again
+			goto S
+		}
+
+		if keyFound {
+			b.Write(buf)
+		}
+	}
+
+	log.Printf("D: %s", string(b.B[8044053-1024:8044053+1024]))
+	log.Printf("D: %d", b.Len())
+	return base64.StdEncoding.DecodeString(b.String())
 }

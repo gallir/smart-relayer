@@ -13,9 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
-	gzip "github.com/klauspost/pgzip"
 )
 
 // Server is the thread that listen for clients' connections
@@ -32,10 +35,13 @@ type Server struct {
 
 	lastError time.Time
 	errors    int64
+
+	s3sess *session.Session
 }
 
 var (
-	sep = []byte("\t")
+	sep     = []byte("\t")
+	newLine = []byte("\n")
 )
 
 var (
@@ -44,7 +50,7 @@ var (
 	errOverloaded          = errors.New("Redis overloaded")
 	errStreamSet           = errors.New("STSET [timestamp] [key] [value]")
 	errStreamGet           = errors.New("STGET [timestamp] [key]")
-	errStreamToBackend     = errors.New("ST2BACK [path]")
+	errStreamToBackend     = errors.New("ST2BACKEND [path]")
 	errChanFull            = errors.New("The file can't be created")
 	respOK                 = redis.NewRespSimple("OK")
 	respTrue               = redis.NewResp(1)
@@ -60,14 +66,15 @@ var (
 	defaultBuffer       = 1024
 	defaultPath         = "/tmp"
 	defaultLimitRecords = 9999
+	defaultFileSize     = 50 * 1024 * 1025
 )
 
 func init() {
 	commands = map[string]*redis.Resp{
-		"PING":    respOK,
-		"STSET":   respOK,
-		"STGET":   respOK,
-		"ST2BACK": respOK,
+		"PING":       respOK,
+		"STSET":      respOK,
+		"STGET":      respOK,
+		"ST2BACKEND": respOK,
 	}
 }
 
@@ -104,6 +111,18 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 
 	if srv.C == nil {
 		srv.C = make(chan *Msg, srv.config.Buffer)
+	}
+
+	if sess, err := session.NewSessionWithOptions(session.Options{
+		Profile: srv.config.Profile,
+		Config: aws.Config{
+			Region: &srv.config.Region,
+		},
+	}); err == nil {
+		srv.s3sess = sess
+	} else {
+		log.Printf("ERROR: invalid S3 session: %s", err)
+		srv.s3sess = nil
 	}
 
 	lw := len(srv.writers)
@@ -231,7 +250,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			// Get message from the pool. This message will be return after write
 			// in a file in one of the writers routines (writers.go). In case of error
 			// will be returned to the pull immediately
-			msg := getMsg(&srv.config.Path)
+			msg := getMsg(srv)
 			// Read the key string and store in the Msg
 			if err := msg.parse(req.Items); err != nil {
 				// Response error to the client
@@ -260,7 +279,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			}
 
 			// Get message from the pool.
-			msg := getMsg(&srv.config.Path)
+			msg := getMsg(srv)
 			// Read the key string and store in the Msg
 			if err := msg.parse(req.Items); err != nil {
 				// Response error to the client
@@ -278,57 +297,117 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 			putMsg(msg)
 
-		case "ST2BACK":
-			// This command require 3 items
-			if len(req.Items) != 2 {
+		case "ST2BACKEND":
+			if len(req.Items) > 3 {
 				respBadStreamToBackend.WriteTo(netCon)
 				continue
 			}
 
-			path, _ := req.Items[1].Str()
+			fromTime, _ := req.Items[1].Str()
 
-			files, err := ioutil.ReadDir(path)
+			d, err := time.ParseDuration(fromTime)
 			if err != nil {
-				redis.NewResp(err).WriteTo(netCon)
+				respBadStreamToBackend.WriteTo(netCon)
 				continue
 			}
 
-			sw, err := NewSplitWriter()
-			if err != nil {
-				redis.NewResp(err).WriteTo(netCon)
+			until := time.Duration(15 * time.Minute)
+			if len(req.Items) > 2 {
+				if untilTime, err := req.Items[2].Str(); err == nil {
+					until, err = time.ParseDuration(untilTime)
+					if err != nil {
+						respBadStreamToBackend.WriteTo(netCon)
+						continue
+					}
+				}
+			}
+
+			if until >= d {
+				respBadStreamToBackend.WriteTo(netCon)
 				continue
 			}
 
-			for _, file := range files {
+			from := time.Now().Add(-d).Add(-1 * time.Second)
+			recDone := 0
 
-				// Split the timestamp and the index name
-				sf := strings.SplitN(file.Name(), "-", 2)
+			for {
 
-				lf, err := os.Open(fmt.Sprintf("%s/%s", path, file.Name()))
+				// Don't process files newer than X minutes
+				if from.After(time.Now().Add(-until)) {
+					break
+				}
+
+				from = from.Add(1 * time.Second)
+				path := srv.fullpath(from)
+
+				files, err := ioutil.ReadDir(path)
 				if err != nil {
-					log.Printf("STREAM: Can't read the file %s: %s", file.Name(), err)
 					continue
 				}
 
-				sw.Write([]byte(sf[0]))
-				sw.Write(sep)
-				sw.Write([]byte(sf[1][:len(sf[1])-len(ext)-1]))
-				sw.Write(sep)
+				// The idea of the next lines is read each log file and copy in one file,
+				// trying to don't allocate the entire content in the memory.
+				// The encoding to base64 use an stream and io.Copy to copy the content
+				// from the log file to the base64 stream. In the same way the *WriteCompress will
+				// compress all the content in a new file using an stream.
+				wc, err := NewWriteCompress(strings.Replace(path, srv.config.Path, "", -1), srv.s3Upload)
+				if err != nil {
+					redis.NewResp(err).WriteTo(netCon)
+					continue
+				}
 
-				encoder := base64.NewEncoder(base64.StdEncoding, sw)
-				io.Copy(encoder, lf)
-				encoder.Close()
+				for _, file := range files {
 
-				lf.Close()
+					// Split the timestamp and the index name
+					sf := strings.SplitN(file.Name(), "-", 2)
 
-				sw.Write(newLine)
+					f, err := os.Open(fmt.Sprintf("%s/%s", path, file.Name()))
+					if err != nil {
+						log.Printf("STREAM: Can't read the file %s: %s", file.Name(), err)
+						continue
+					}
 
-				sw.counter()
+					// Write the timestamp
+					wc.Write([]byte(sf[0]))
+					wc.Write(sep)
+					// Write the ID ignoring the last bytes because are the file ext
+					wc.Write([]byte(sf[1][:len(sf[1])-len(ext)-1]))
+					wc.Write(sep)
+
+					// Create the Base64 encoder with SplitWriter as a Reader
+					encoder := base64.NewEncoder(base64.StdEncoding, wc)
+					// Copy the content of the file (f) in the encoder
+					io.Copy(encoder, f)
+					// Close enconder
+					encoder.Close()
+
+					// Close file (f)
+					f.Close()
+
+					wc.Write(newLine)
+
+					// Interal controller of SplitWriter to limit the size of the file
+					if err := wc.Control(); err != nil {
+						log.Printf("ERROR: Can't close the file: %s", err)
+						break
+					}
+				}
+
+				if err := wc.Close(); err != nil {
+					redis.NewResp(err).WriteTo(netCon)
+					continue
+				}
+
+				// Count total records
+				recDone += wc.RecDone
+
+				// for _, file := range files {
+				// 	(os.Remove(fmt.Sprintf("%s/%s", path, file.Name()))
+				// }
 			}
 
-			sw.Close()
-
-			fastResponse.WriteTo(netCon)
+			// Send OK response to the client
+			redis.NewRespSimple(fmt.Sprintf("OK - %d records moved to S3", recDone)).WriteTo(netCon)
 
 		default:
 			log.Panicf("Invalid command: This never should happen, check the cases or the list of valid command")
@@ -338,63 +417,19 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	}
 }
 
-func NewSplitWriter() (*SplitWriter, error) {
-	s := &SplitWriter{}
-	if err := s.start(); err != nil {
-		return nil, err
-	}
-
-	return s, nil
+func (srv *Server) s3Upload(name string, f *os.File) error {
+	_, err := s3.New(srv.s3sess).PutObject(&s3.PutObjectInput{
+		Bucket: &srv.config.S3Bucket,
+		Key:    &name,
+		Body:   f,
+	})
+	return err
 }
 
-type SplitWriter struct {
-	tmp   *os.File
-	gz    *gzip.Writer
-	count int
+func (srv *Server) fullpath(t time.Time) string {
+	return fmt.Sprintf("%s/%d/%d/%d/%d/%d/%d", srv.config.Path, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 }
 
-func (s *SplitWriter) start() (err error) {
-
-	s.count = 0
-
-	s.tmp, err = ioutil.TempFile("", "example")
-	if err != nil {
-		return
-	}
-
-	s.gz = lib.GzipPool.Get().(*gzip.Writer)
-	s.gz.Reset(s.tmp)
-
-	return
-}
-
-func (s *SplitWriter) counter() {
-	if s.count < defaultLimitRecords {
-		s.count++
-		return
-	}
-
-	s.Close()
-	s.start()
-}
-
-func (s *SplitWriter) Write(b []byte) (int, error) {
-	return s.gz.Write(b)
-}
-
-func (s *SplitWriter) Close() (err error) {
-
-	if err = s.gz.Close(); err != nil {
-		return
-	}
-
-	if err = s.tmp.Close(); err != nil {
-		return
-	}
-
-	s.gz.Reset(ioutil.Discard)
-
-	lib.GzipPool.Put(s.gz)
-
-	return
+func (srv *Server) path(t time.Time) string {
+	return fmt.Sprintf("%d/%d/%d/%d/%d/%d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 }
