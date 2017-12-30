@@ -168,7 +168,7 @@ func (m *Msg) bytesS3() ([]byte, error) {
 		// Check again "sep"
 		if !unixFound {
 			n := -1
-			nb := byte('\n')
+			var nb byte
 			for n, nb = range buf {
 				if nb == sep[0] {
 					unixFound = true
@@ -189,7 +189,7 @@ func (m *Msg) bytesS3() ([]byte, error) {
 
 		if !keyFound {
 			n := -1
-			nb := byte('\n')
+			var nb byte
 			for n, nb = range buf {
 				if nb == sep[0] {
 					keyFound = true
@@ -213,13 +213,9 @@ func (m *Msg) bytesS3() ([]byte, error) {
 			}
 		}
 
-		if bytes.Contains(buf, newLine) {
-			i := bytes.IndexByte(buf, newLine[0])
-
+		if i := bytes.IndexByte(buf, newLine[0]); i > -1 {
 			if recFound {
-				last := buf[0:i]
-				b.Write(last)
-				//log.Printf("BREAK: %v |%s| |%s| |%s|", keyFound, unix, key, string(last))
+				b.Write(buf[0:i])
 				break
 			}
 
@@ -241,6 +237,7 @@ func (m *Msg) bytesS3() ([]byte, error) {
 
 	//log.Printf("S: %s", string(b.B[0:1024]))
 	//log.Printf("E: %s", string(b.B[b.Len()-1024:b.Len()]))
+	//log.Printf("D: |%s|", string(b.B[269897-100:269897+100]))
 	//log.Printf("L: %d", b.Len())
 	return base64.StdEncoding.DecodeString(b.String())
 }
