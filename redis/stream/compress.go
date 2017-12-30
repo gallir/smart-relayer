@@ -92,6 +92,7 @@ func (s *WriteCompress) Close() (err error) {
 	// Point the the gz interface to /dev/null and return it to the pool
 	s.gz.Reset(ioutil.Discard)
 	lib.GzipPool.Put(s.gz)
+	s.gz = nil
 
 	if s.fn == nil {
 		s.tmp.Close()

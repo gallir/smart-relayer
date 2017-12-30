@@ -26,7 +26,7 @@ for ($c = 1; $c<=$limit; $c++) {
     switch ($method) {
         default:
             // SET
-            $value = json_encode(array("a"=>"text to check", "rand"=>randString(rand(100*1024,10*1024*1024))));
+            $value = json_encode(array("a"=>"text to check", "rand"=>randString(rand(100*1024,200*1024))));
             $key = sha1($value);
             $response = phpiredis_command_bs($cli, array("STSET", time(), $key, $value));
             if ($response != "OK") {

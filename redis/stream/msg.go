@@ -142,15 +142,19 @@ func (m *Msg) bytesS3() ([]byte, error) {
 	defer r.Close()
 
 	b := bytebufferpool.Get()
-	buf := make([]byte, 4096)
-	keyFound := false
 
-	unix := ""
-	key := ""
+	recFound := false
+
+	unixFound := false
+	unix := make([]byte, 0)
+	keyFound := false
+	key := make([]byte, 0)
 
 	for {
+
+		buf := make([]byte, 1*1024)
 		if _, err := r.Read(buf); err != nil {
-			if keyFound {
+			if recFound {
 				if err == io.EOF {
 					b.Write(buf)
 					break
@@ -160,54 +164,83 @@ func (m *Msg) bytesS3() ([]byte, error) {
 			return nil, errors.New("Key not found")
 		}
 
-		// Check new line
-	N:
-		if bytes.Contains(buf, newLine) {
-			i := bytes.IndexByte(buf, newLine[0])
-			if keyFound {
-				b.Write(buf[0:i])
-				break
+	S:
+		// Check again "sep"
+		if !unixFound {
+			n := -1
+			nb := byte('\n')
+			for n, nb = range buf {
+				if nb == sep[0] {
+					unixFound = true
+					break
+				}
+				unix = append(unix, nb)
 			}
-			buf = buf[i+1:]
-
-			// Go to check "newLine" again
-			goto N
+			if n > -1 {
+				buf = buf[n+1:]
+				//log.Printf("UNIX: %d |%s|: |%s|", n, string(unix), string(buf))
+				if len(buf) == 0 {
+					continue
+				}
+			} else {
+				log.Printf("U == %s (%d)", string(buf), len(buf))
+			}
 		}
 
-		// Check again "sep"
-	S:
-		if bytes.Contains(buf, sep) && !keyFound {
-
-			iu := bytes.IndexByte(buf, sep[0])
-			if unix == "" && key == "" {
-				unix = string(buf[0:iu])
-			} else if unix != "" && key == "" {
-				key = string(buf[0:iu])
-			}
-			buf = buf[iu+1:]
-
-			if unix != "" && key != "" {
-
-				if key == m.k {
+		if !keyFound {
+			n := -1
+			nb := byte('\n')
+			for n, nb = range buf {
+				if nb == sep[0] {
 					keyFound = true
+					//log.Printf("COMPARE: %s", string(buf))
+					log.Printf("COMPARE: %d |%s| |%s| == |%s|", n, string(unix), string(key), m.k)
+					if string(key) == m.k {
+						recFound = true
+					}
+					break
 				}
+				key = append(key, nb)
+			}
+			if n > -1 {
+				buf = buf[n+1:]
+				//log.Printf("KEY: %d |%s| |%s|: |%s|", n, string(unix), string(key), string(buf))
+				if len(buf) == 0 {
+					continue
+				}
+			} else {
+				log.Printf("K == %s (%d)", string(buf), len(buf))
+			}
+		}
 
-				unix = ""
-				key = ""
-				// Go to check "newLine" again
-				goto N
+		if bytes.Contains(buf, newLine) {
+			i := bytes.IndexByte(buf, newLine[0])
+
+			if recFound {
+				last := buf[0:i]
+				b.Write(last)
+				//log.Printf("BREAK: %v |%s| |%s| |%s|", keyFound, unix, key, string(last))
+				break
 			}
 
-			// Go to check "sep" again
+			recFound = false
+			unixFound = false
+			unix = make([]byte, 0)
+			keyFound = false
+			key = make([]byte, 0)
+
+			buf = buf[i+1:]
+			//log.Printf("N: %v |%s| |%s| |%s|", recFound, string(unix), string(key), string(buf[len(buf)-100:len(buf)]))
 			goto S
 		}
 
-		if keyFound {
+		if recFound {
 			b.Write(buf)
 		}
 	}
 
-	log.Printf("D: %s", string(b.B[8044053-1024:8044053+1024]))
-	log.Printf("D: %d", b.Len())
+	//log.Printf("S: %s", string(b.B[0:1024]))
+	//log.Printf("E: %s", string(b.B[b.Len()-1024:b.Len()]))
+	//log.Printf("L: %d", b.Len())
 	return base64.StdEncoding.DecodeString(b.String())
 }

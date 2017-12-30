@@ -350,7 +350,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				// The encoding to base64 use an stream and io.Copy to copy the content
 				// from the log file to the base64 stream. In the same way the *WriteCompress will
 				// compress all the content in a new file using an stream.
-				wc, err := NewWriteCompress(strings.Replace(path, srv.config.Path, "", -1), srv.s3Upload)
+				wc, err := NewWriteCompress(srv.path(from), srv.s3Upload)
 				if err != nil {
 					redis.NewResp(err).WriteTo(netCon)
 					continue
@@ -370,14 +370,17 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 					// Write the timestamp
 					wc.Write([]byte(sf[0]))
 					wc.Write(sep)
-					// Write the ID ignoring the last bytes because are the file ext
+					// Write the ID ignoring the last bytes because is the file ext
 					wc.Write([]byte(sf[1][:len(sf[1])-len(ext)-1]))
 					wc.Write(sep)
 
-					// Create the Base64 encoder with SplitWriter as a Reader
+					// Create the Base64 encoder with WriteCompress as a Reader
 					encoder := base64.NewEncoder(base64.StdEncoding, wc)
 					// Copy the content of the file (f) in the encoder
-					io.Copy(encoder, f)
+					if _, err := io.Copy(encoder, f); err != nil {
+						log.Printf("ERROR Base64 encoder: %s", err)
+						continue
+					}
 					// Close enconder
 					encoder.Close()
 
@@ -386,7 +389,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 					wc.Write(newLine)
 
-					// Interal controller of SplitWriter to limit the size of the file
+					// Interal controller of WriteCompress to limit the size of the file
 					if err := wc.Control(); err != nil {
 						log.Printf("ERROR: Can't close the file: %s", err)
 						break
@@ -427,9 +430,9 @@ func (srv *Server) s3Upload(name string, f *os.File) error {
 }
 
 func (srv *Server) fullpath(t time.Time) string {
-	return fmt.Sprintf("%s/%d/%d/%d/%d/%d/%d", srv.config.Path, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d/%.2d/%.2d", srv.config.Path, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 }
 
 func (srv *Server) path(t time.Time) string {
-	return fmt.Sprintf("%d/%d/%d/%d/%d/%d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+	return fmt.Sprintf("%d/%.2d/%.2d/%.2d/%.2d/%.2d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 }
