@@ -1,8 +1,10 @@
-package stream
+package ifaceS3
 
 import (
+	"archive/tar"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 
 	"github.com/gallir/smart-relayer/lib"
@@ -26,6 +28,7 @@ func NewWriteCompress(path string, fn func(name string, f *os.File) error) (*Wri
 type WriteCompress struct {
 	tmp     *os.File
 	gz      *gzip.Writer
+	t       *tar.Writer
 	id      int
 	count   int
 	size    int
@@ -41,6 +44,7 @@ func (s *WriteCompress) start() (err error) {
 	s.size = 0
 
 	s.tmp, err = ioutil.TempFile("", "logs")
+	log.Printf("TMP: %s", s.tmp.Name())
 	if err != nil {
 		return
 	}
@@ -49,17 +53,18 @@ func (s *WriteCompress) start() (err error) {
 	s.gz.Reset(s.tmp)
 	s.gz.Name = fmt.Sprintf("records-%d.csv", s.id)
 
+	s.t = tar.NewWriter(s.gz)
+
 	return
 }
 
-// Control will close the tmp file and start a new one if cross one of the limits
-func (s *WriteCompress) Control() (err error) {
-
+// Write a file in tar
+func (s *WriteCompress) WriteFile(f *os.FileInfo) (err error) {
 	s.RecDone++
 
 	if s.count < defaultLimitRecords && s.size < defaultFileSize {
 		s.count++
-		return
+		return nil
 	}
 
 	if err = s.Close(); err != nil {
@@ -71,19 +76,17 @@ func (s *WriteCompress) Control() (err error) {
 	}
 
 	return
-}
 
-// Write in the gzip
-func (s *WriteCompress) Write(b []byte) (int, error) {
-	size, err := s.gz.Write(b)
-	s.size += size
-	return size, err
 }
 
 // Close the temp file and the gz interface. The gz will be returned to the pool
 func (s *WriteCompress) Close() (err error) {
 
-	s.gz.Comment = fmt.Sprintf("%d records stored", s.count)
+	// Close the tar interface
+	if err = s.t.Close(); err != nil {
+		return
+	}
+
 	// Close the gz interface
 	if err = s.gz.Close(); err != nil {
 		return
@@ -99,7 +102,7 @@ func (s *WriteCompress) Close() (err error) {
 		return
 	}
 
-	if err := s.fn(fmt.Sprintf("%s/records-%d.gz", s.path, s.id), s.tmp); err != nil {
+	if err := s.fn(fmt.Sprintf("%s/records-%d.tar.gz", s.path, s.id), s.tmp); err != nil {
 		return err
 	}
 

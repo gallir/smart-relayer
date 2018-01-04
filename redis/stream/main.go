@@ -1,21 +1,15 @@
 package stream
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
 	"net"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
@@ -45,36 +39,31 @@ var (
 )
 
 var (
-	errBadCmd              = errors.New("ERR bad command")
-	errKO                  = errors.New("fatal error")
-	errOverloaded          = errors.New("Redis overloaded")
-	errStreamSet           = errors.New("STSET [timestamp] [key] [value]")
-	errStreamGet           = errors.New("STGET [timestamp] [key]")
-	errStreamToBackend     = errors.New("ST2BACKEND [path]")
-	errChanFull            = errors.New("The file can't be created")
-	respOK                 = redis.NewRespSimple("OK")
-	respTrue               = redis.NewResp(1)
-	respBadCommand         = redis.NewResp(errBadCmd)
-	respKO                 = redis.NewResp(errKO)
-	respBadStreamSet       = redis.NewResp(errStreamSet)
-	respBadStreamGet       = redis.NewResp(errStreamGet)
-	respBadStreamToBackend = redis.NewResp(errStreamToBackend)
-	respChanFull           = redis.NewResp(errChanFull)
-	commands               map[string]*redis.Resp
+	errBadCmd      = errors.New("ERR bad command")
+	errKO          = errors.New("fatal error")
+	errOverloaded  = errors.New("Redis overloaded")
+	errSet         = errors.New("ERR - syntax: project key [timestamp] value")
+	errGet         = errors.New("ERR - syntax: project key [timestamp]")
+	errChanFull    = errors.New("ERR - The file can't be created")
+	respOK         = redis.NewRespSimple("OK")
+	respTrue       = redis.NewResp(1)
+	respBadCommand = redis.NewResp(errBadCmd)
+	respKO         = redis.NewResp(errKO)
+	respBadSet     = redis.NewResp(errSet)
+	respBadGet     = redis.NewResp(errGet)
+	respChanFull   = redis.NewResp(errChanFull)
+	commands       map[string]*redis.Resp
 
-	defaultMaxWriters   = 100
-	defaultBuffer       = 1024
-	defaultPath         = "/tmp"
-	defaultLimitRecords = 9999
-	defaultFileSize     = 50 * 1024 * 1025
+	defaultMaxWriters = 100
+	defaultBuffer     = 1024
+	defaultPath       = "/tmp"
 )
 
 func init() {
 	commands = map[string]*redis.Resp{
-		"PING":       respOK,
-		"STSET":      respOK,
-		"STGET":      respOK,
-		"ST2BACKEND": respOK,
+		"PING": respOK,
+		"SET":  respOK,
+		"GET":  respOK,
 	}
 }
 
@@ -240,29 +229,66 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		switch req.Command {
 		case "PING":
 			fastResponse.WriteTo(netCon)
-		case "STSET":
-			// This command require 4 elements
-			if len(req.Items) != 4 {
-				respBadStreamSet.WriteTo(netCon)
+		case "SET":
+			// SET project key [timestamp] value
+			if len(req.Items) <= 3 || len(req.Items) > 5 {
+				log.Printf("ERR: %d", len(req.Items))
+				respBadSet.WriteTo(netCon)
 				continue
 			}
 
-			// Get message from the pool. This message will be return after write
-			// in a file in one of the writers routines (writers.go). In case of error
-			// will be returned to the pull immediately
+			var err error
+
+			// Get a message struct from the pool
 			msg := getMsg(srv)
-			// Read the key string and store in the Msg
-			if err := msg.parse(req.Items); err != nil {
-				// Response error to the client
-				respBadStreamSet.WriteTo(netCon)
-				// Return message to the pool just in errors
+
+			msg.project, err = req.Items[1].Str()
+			if err != nil {
+				log.Printf("ERR project: %d", len(req.Items))
+				respBadSet.WriteTo(netCon)
 				putMsg(msg)
 				continue
 			}
 
-			// Read bytes from the client and store in the message buffer (Msg.b)
-			b, _ := req.Items[3].Bytes()
-			msg.b.Write(b)
+			msg.k, err = req.Items[2].Str()
+			if err != nil {
+				log.Printf("ERR k: %d", len(req.Items))
+				respBadSet.WriteTo(netCon)
+				putMsg(msg)
+				continue
+			}
+
+			if len(req.Items) == 4 {
+				if b, err := req.Items[3].Bytes(); err == nil {
+					msg.b.Write(b)
+				} else {
+					log.Printf("ERR value: %d", len(req.Items))
+					respBadSet.WriteTo(netCon)
+					putMsg(msg)
+					continue
+				}
+
+				// Current time
+				msg.t = time.Now()
+			} else {
+				if i, err := req.Items[3].Int64(); err == nil {
+					msg.t = time.Unix(i, 0)
+				} else {
+					log.Printf("ERR time: %d", len(req.Items))
+					respBadSet.WriteTo(netCon)
+					putMsg(msg)
+					continue
+				}
+
+				if b, err := req.Items[4].Bytes(); err == nil {
+					msg.b.Write(b)
+				} else {
+					log.Printf("ERR value: %d", len(req.Items))
+					respBadSet.WriteTo(netCon)
+					putMsg(msg)
+					continue
+				}
+			}
 
 			select {
 			case srv.C <- msg:
@@ -271,22 +297,40 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				respChanFull.WriteTo(netCon)
 			}
 
-		case "STGET":
-			// This command require 3 items
-			if len(req.Items) != 3 {
-				respBadStreamGet.WriteTo(netCon)
+		case "GET":
+			// GET project key [timestamp]
+			if len(req.Items) <= 2 || len(req.Items) > 4 {
+				respBadGet.WriteTo(netCon)
 				continue
 			}
 
-			// Get message from the pool.
+			var err error
+
+			// Get a message struct from the pool
 			msg := getMsg(srv)
-			// Read the key string and store in the Msg
-			if err := msg.parse(req.Items); err != nil {
-				// Response error to the client
-				respBadStreamGet.WriteTo(netCon)
-				// Return message to the pool
+
+			msg.project, err = req.Items[1].Str()
+			if err != nil {
+				respBadGet.WriteTo(netCon)
 				putMsg(msg)
 				continue
+			}
+
+			msg.k, err = req.Items[2].Str()
+			if err != nil {
+				respBadGet.WriteTo(netCon)
+				putMsg(msg)
+				continue
+			}
+
+			if len(req.Items) == 4 {
+				if i, err := req.Items[3].Int64(); err == nil {
+					msg.t = time.Unix(i, 0)
+				} else {
+					respBadGet.WriteTo(netCon)
+					putMsg(msg)
+					continue
+				}
 			}
 
 			if b, err := msg.Bytes(); err != nil {
@@ -297,121 +341,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 			putMsg(msg)
 
-		case "ST2BACKEND":
-			if len(req.Items) > 3 {
-				respBadStreamToBackend.WriteTo(netCon)
-				continue
-			}
-
-			fromTime, _ := req.Items[1].Str()
-
-			d, err := time.ParseDuration(fromTime)
-			if err != nil {
-				respBadStreamToBackend.WriteTo(netCon)
-				continue
-			}
-
-			until := time.Duration(15 * time.Minute)
-			if len(req.Items) > 2 {
-				if untilTime, err := req.Items[2].Str(); err == nil {
-					until, err = time.ParseDuration(untilTime)
-					if err != nil {
-						respBadStreamToBackend.WriteTo(netCon)
-						continue
-					}
-				}
-			}
-
-			if until >= d {
-				respBadStreamToBackend.WriteTo(netCon)
-				continue
-			}
-
-			from := time.Now().Add(-d).Add(-1 * time.Second)
-			recDone := 0
-
-			for {
-
-				// Don't process files newer than X minutes
-				if from.After(time.Now().Add(-until)) {
-					break
-				}
-
-				from = from.Add(1 * time.Second)
-				path := srv.fullpath(from)
-
-				files, err := ioutil.ReadDir(path)
-				if err != nil {
-					continue
-				}
-
-				// The idea of the next lines is read each log file and copy in one file,
-				// trying to don't allocate the entire content in the memory.
-				// The encoding to base64 use an stream and io.Copy to copy the content
-				// from the log file to the base64 stream. In the same way the *WriteCompress will
-				// compress all the content in a new file using an stream.
-				wc, err := NewWriteCompress(srv.path(from), srv.s3Upload)
-				if err != nil {
-					redis.NewResp(err).WriteTo(netCon)
-					continue
-				}
-
-				for _, file := range files {
-
-					// Split the timestamp and the index name
-					sf := strings.SplitN(file.Name(), "-", 2)
-
-					f, err := os.Open(fmt.Sprintf("%s/%s", path, file.Name()))
-					if err != nil {
-						log.Printf("STREAM: Can't read the file %s: %s", file.Name(), err)
-						continue
-					}
-
-					// Write the timestamp
-					wc.Write([]byte(sf[0]))
-					wc.Write(sep)
-					// Write the ID ignoring the last bytes because is the file ext
-					wc.Write([]byte(sf[1][:len(sf[1])-len(ext)-1]))
-					wc.Write(sep)
-
-					// Create the Base64 encoder with WriteCompress as a Reader
-					encoder := base64.NewEncoder(base64.StdEncoding, wc)
-					// Copy the content of the file (f) in the encoder
-					if _, err := io.Copy(encoder, f); err != nil {
-						log.Printf("ERROR Base64 encoder: %s", err)
-						continue
-					}
-					// Close enconder
-					encoder.Close()
-
-					// Close file (f)
-					f.Close()
-
-					wc.Write(newLine)
-
-					// Interal controller of WriteCompress to limit the size of the file
-					if err := wc.Control(); err != nil {
-						log.Printf("ERROR: Can't close the file: %s", err)
-						break
-					}
-				}
-
-				if err := wc.Close(); err != nil {
-					redis.NewResp(err).WriteTo(netCon)
-					continue
-				}
-
-				// Count total records
-				recDone += wc.RecDone
-
-				// for _, file := range files {
-				// 	(os.Remove(fmt.Sprintf("%s/%s", path, file.Name()))
-				// }
-			}
-
-			// Send OK response to the client
-			redis.NewRespSimple(fmt.Sprintf("OK - %d records moved to S3", recDone)).WriteTo(netCon)
-
 		default:
 			log.Panicf("Invalid command: This never should happen, check the cases or the list of valid command")
 
@@ -420,19 +349,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	}
 }
 
-func (srv *Server) s3Upload(name string, f *os.File) error {
-	_, err := s3.New(srv.s3sess).PutObject(&s3.PutObjectInput{
-		Bucket: &srv.config.S3Bucket,
-		Key:    &name,
-		Body:   f,
-	})
-	return err
+func (srv *Server) fullpath(project string, t time.Time) string {
+	return fmt.Sprintf("%s/%s/%d/%.2d/%.2d/%.2d/%.2d", srv.config.Path, project, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute())
 }
 
-func (srv *Server) fullpath(t time.Time) string {
-	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d/%.2d/%.2d", srv.config.Path, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
-}
-
-func (srv *Server) path(t time.Time) string {
-	return fmt.Sprintf("%d/%.2d/%.2d/%.2d/%.2d/%.2d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+func (srv *Server) path(project string, t time.Time) string {
+	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d/%.2d", project, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute())
 }

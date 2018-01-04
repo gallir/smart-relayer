@@ -1,24 +1,14 @@
 package stream
 
 import (
-	"bytes"
-	"compress/gzip"
-	"encoding/base64"
-	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/gallir/bytebufferpool"
-	"github.com/gallir/radix.improved/redis"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/gallir/smart-relayer/redis/stream/ifaceS3"
 )
 
 var (
@@ -50,52 +40,33 @@ func putMsg(m *Msg) {
 }
 
 type Msg struct {
-	t   time.Time
-	k   string
-	b   *bytebufferpool.ByteBuffer
-	srv *Server
+	project string
+	t       time.Time
+	k       string
+	b       *bytebufferpool.ByteBuffer
+	srv     *Server
 }
 
 func (m *Msg) fullpath() string {
-	return m.srv.fullpath(m.t)
+	return m.srv.fullpath(m.project, m.t)
 }
 
 func (m *Msg) path() string {
-	return m.srv.path(m.t)
+	return m.srv.path(m.project, m.t)
 }
 
 func (m *Msg) filename() string {
-	return fmt.Sprintf("%d-%s.%s", m.t.Unix(), m.k, ext)
-}
-
-func (m *Msg) parse(r []*redis.Resp) (err error) {
-
-	// Read first argument to be parsed as Int64
-	var i int64
-	i, err = r[1].Int64()
-	if err != nil {
-		return err
-	}
-
-	// Convert int64 to Time
-	m.t = time.Unix(i, 0)
-
-	// Read and store the string key
-	if m.k, err = r[2].Str(); err != nil {
-		return err
-	}
-
-	return nil
+	return fmt.Sprintf("%s.%s", m.k, ext)
 }
 
 func (m *Msg) Bytes() (b []byte, err error) {
 
-	// if b, err = m.bytesFile(); err == nil {
-	// 	return b, err
-	// }
-
-	b, err = m.bytesS3()
+	b, err = m.bytesFile()
 	return b, err
+
+	// for future releases read from S3
+	// b, err = m.bytesS3()
+	// return b, err
 }
 
 func (m *Msg) bytesFile() ([]byte, error) {
@@ -114,130 +85,6 @@ func (m *Msg) bytesFile() ([]byte, error) {
 }
 
 func (m *Msg) bytesS3() ([]byte, error) {
-
-	downloader := s3manager.NewDownloader(m.srv.s3sess)
-
-	file, err := ioutil.TempFile("", "logs-download")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(file.Name())
-	defer file.Close()
-
-	_, err = downloader.Download(file,
-		&s3.GetObjectInput{
-			Bucket: &m.srv.config.S3Bucket,                               // Required
-			Key:    aws.String(fmt.Sprintf("%s/records-1.gz", m.path())), // Required
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	file.Seek(0, 0)
-
-	r, err := gzip.NewReader(file)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
-	b := bytebufferpool.Get()
-
-	recFound := false
-
-	unixFound := false
-	unix := make([]byte, 0)
-	keyFound := false
-	key := make([]byte, 0)
-
-	for {
-
-		buf := make([]byte, 1*1024)
-		if _, err := r.Read(buf); err != nil {
-			if recFound {
-				if err == io.EOF {
-					b.Write(buf)
-					break
-				}
-				return nil, err
-			}
-			return nil, errors.New("Key not found")
-		}
-
-	S:
-		// Check again "sep"
-		if !unixFound {
-			n := -1
-			var nb byte
-			for n, nb = range buf {
-				if nb == sep[0] {
-					unixFound = true
-					break
-				}
-				unix = append(unix, nb)
-			}
-			if n > -1 {
-				buf = buf[n+1:]
-				//log.Printf("UNIX: %d |%s|: |%s|", n, string(unix), string(buf))
-				if len(buf) == 0 {
-					continue
-				}
-			} else {
-				log.Printf("U == %s (%d)", string(buf), len(buf))
-			}
-		}
-
-		if !keyFound {
-			n := -1
-			var nb byte
-			for n, nb = range buf {
-				if nb == sep[0] {
-					keyFound = true
-					//log.Printf("COMPARE: %s", string(buf))
-					log.Printf("COMPARE: %d |%s| |%s| == |%s|", n, string(unix), string(key), m.k)
-					if string(key) == m.k {
-						recFound = true
-					}
-					break
-				}
-				key = append(key, nb)
-			}
-			if n > -1 {
-				buf = buf[n+1:]
-				//log.Printf("KEY: %d |%s| |%s|: |%s|", n, string(unix), string(key), string(buf))
-				if len(buf) == 0 {
-					continue
-				}
-			} else {
-				log.Printf("K == %s (%d)", string(buf), len(buf))
-			}
-		}
-
-		if i := bytes.IndexByte(buf, newLine[0]); i > -1 {
-			if recFound {
-				b.Write(buf[0:i])
-				break
-			}
-
-			recFound = false
-			unixFound = false
-			unix = make([]byte, 0)
-			keyFound = false
-			key = make([]byte, 0)
-
-			buf = buf[i+1:]
-			//log.Printf("N: %v |%s| |%s| |%s|", recFound, string(unix), string(key), string(buf[len(buf)-100:len(buf)]))
-			goto S
-		}
-
-		if recFound {
-			b.Write(buf)
-		}
-	}
-
-	//log.Printf("S: %s", string(b.B[0:1024]))
-	//log.Printf("E: %s", string(b.B[b.Len()-1024:b.Len()]))
-	//log.Printf("D: |%s|", string(b.B[269897-100:269897+100]))
-	//log.Printf("L: %d", b.Len())
-	return base64.StdEncoding.DecodeString(b.String())
+	r := ifaceS3.NewReaderUncompress(m.srv.s3sess, m.srv.config.S3Bucket)
+	return r.Get(fmt.Sprintf("%s/records-1.tar.gz", m.path()))
 }
