@@ -45,15 +45,15 @@ func (w *writer) listen() {
 }
 
 func (w *writer) writeTo(m *Msg) error {
-	w.dirName = m.fullpath()
-	if err := os.MkdirAll(w.dirName, os.ModePerm); err != nil {
+	dirName := m.fullpath()
+	if err := os.MkdirAll(dirName, os.ModePerm); err != nil {
 		log.Printf("File ERROR: %s", err)
 		return err
 	}
 
-	w.fileName = fmt.Sprintf("%s/%s", w.dirName, m.filename())
+	fileName := fmt.Sprintf("%s/%s", dirName, m.filename())
 
-	newFile, err := os.OpenFile(w.fileName, os.O_RDWR|os.O_CREATE, 0644)
+	newFile, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Printf("File ERROR: %s", err)
 		return err

@@ -29,11 +29,11 @@ for ($c = 1; $c<=$limit; $c++) {
             $value = json_encode(array("a"=>"text to check", "rand"=>randString(rand(100*1024,200*1024))));
             $key = sha1($value);
             $response = phpiredis_command_bs($cli, array("SET", "testing", $key, time(), $value));
-            if ($response != "OK") {
+            printf("R: %s\n", $response);
+            if (substr($response, 0, 3) == "ERR") {
                 printf("Error in SET %s\n", $response);
                 exit(1);
             }
-            print(1);
             usleep(500);
             break;
     }

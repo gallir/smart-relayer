@@ -31,8 +31,6 @@ foreach(glob($dir."/*/*/*/*/*/*/*.log") as $file) {
         $project = $r[1];
         $key = $r[7];
 
-        printf("GET %s %s %d", $project, $key, $t);
-
         
 
         $startTime = microtime(True);
@@ -41,9 +39,11 @@ foreach(glob($dir."/*/*/*/*/*/*/*.log") as $file) {
         $rl = mb_strlen($response);
 
         if ($response == $original) {
-            printf(" -- [%d] elapsed %0.3f OK\n", $rl, $elapsed);
             continue;
         }
+
+        printf("GET %s %s %d", $project, $key, $t);
+        printf(" -- [%d] elapsed %0.3f OK\n", $rl, $elapsed);
 
         print("\n");
         printf("\tO [%d]: %s...%s\n", $ol, mb_substr($original, 0, $limit), mb_substr($original, $ol-$limit, $ol));

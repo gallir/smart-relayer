@@ -45,6 +45,7 @@ var (
 	errSet         = errors.New("ERR - syntax: project key [timestamp] value")
 	errGet         = errors.New("ERR - syntax: project key [timestamp]")
 	errChanFull    = errors.New("ERR - The file can't be created")
+	errNotFound    = errors.New("ERR - Key not found")
 	respOK         = redis.NewRespSimple("OK")
 	respTrue       = redis.NewResp(1)
 	respBadCommand = redis.NewResp(errBadCmd)
@@ -52,6 +53,7 @@ var (
 	respBadSet     = redis.NewResp(errSet)
 	respBadGet     = redis.NewResp(errGet)
 	respChanFull   = redis.NewResp(errChanFull)
+	respNotFound   = redis.NewResp(errNotFound)
 	commands       map[string]*redis.Resp
 
 	defaultMaxWriters = 100
@@ -232,69 +234,12 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		case "SET":
 			// SET project key [timestamp] value
 			if len(req.Items) <= 3 || len(req.Items) > 5 {
-				log.Printf("ERR: %d", len(req.Items))
 				respBadSet.WriteTo(netCon)
 				continue
 			}
 
-			var err error
-
-			// Get a message struct from the pool
-			msg := getMsg(srv)
-
-			msg.project, err = req.Items[1].Str()
-			if err != nil {
-				log.Printf("ERR project: %d", len(req.Items))
+			if err := srv.set(netCon, req.Items); err != nil {
 				respBadSet.WriteTo(netCon)
-				putMsg(msg)
-				continue
-			}
-
-			msg.k, err = req.Items[2].Str()
-			if err != nil {
-				log.Printf("ERR k: %d", len(req.Items))
-				respBadSet.WriteTo(netCon)
-				putMsg(msg)
-				continue
-			}
-
-			if len(req.Items) == 4 {
-				if b, err := req.Items[3].Bytes(); err == nil {
-					msg.b.Write(b)
-				} else {
-					log.Printf("ERR value: %d", len(req.Items))
-					respBadSet.WriteTo(netCon)
-					putMsg(msg)
-					continue
-				}
-
-				// Current time
-				msg.t = time.Now()
-			} else {
-				if i, err := req.Items[3].Int64(); err == nil {
-					msg.t = time.Unix(i, 0)
-				} else {
-					log.Printf("ERR time: %d", len(req.Items))
-					respBadSet.WriteTo(netCon)
-					putMsg(msg)
-					continue
-				}
-
-				if b, err := req.Items[4].Bytes(); err == nil {
-					msg.b.Write(b)
-				} else {
-					log.Printf("ERR value: %d", len(req.Items))
-					respBadSet.WriteTo(netCon)
-					putMsg(msg)
-					continue
-				}
-			}
-
-			select {
-			case srv.C <- msg:
-				fastResponse.WriteTo(netCon)
-			default:
-				respChanFull.WriteTo(netCon)
 			}
 
 		case "GET":
@@ -304,42 +249,9 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				continue
 			}
 
-			var err error
-
-			// Get a message struct from the pool
-			msg := getMsg(srv)
-
-			msg.project, err = req.Items[1].Str()
-			if err != nil {
+			if err := srv.get(netCon, req.Items); err != nil {
 				respBadGet.WriteTo(netCon)
-				putMsg(msg)
-				continue
 			}
-
-			msg.k, err = req.Items[2].Str()
-			if err != nil {
-				respBadGet.WriteTo(netCon)
-				putMsg(msg)
-				continue
-			}
-
-			if len(req.Items) == 4 {
-				if i, err := req.Items[3].Int64(); err == nil {
-					msg.t = time.Unix(i, 0)
-				} else {
-					respBadGet.WriteTo(netCon)
-					putMsg(msg)
-					continue
-				}
-			}
-
-			if b, err := msg.Bytes(); err != nil {
-				redis.NewResp(err).WriteTo(netCon)
-			} else {
-				redis.NewResp(b).WriteTo(netCon)
-			}
-
-			putMsg(msg)
 
 		default:
 			log.Panicf("Invalid command: This never should happen, check the cases or the list of valid command")
@@ -355,4 +267,86 @@ func (srv *Server) fullpath(project string, t time.Time) string {
 
 func (srv *Server) path(project string, t time.Time) string {
 	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d/%.2d", project, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute())
+}
+
+func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
+
+	// Get a message struct from the pool
+	msg := getMsg(srv)
+
+	msg.project, err = items[1].Str()
+	if err != nil {
+		return err
+	}
+
+	msg.k, err = items[2].Str()
+	if err != nil {
+		return err
+	}
+
+	if len(items) == 4 {
+		if b, err := items[3].Bytes(); err == nil {
+			msg.b.Write(b)
+		} else {
+			return err
+		}
+
+		// Current time
+		msg.t = time.Now()
+	} else {
+		if i, err := items[3].Int64(); err == nil {
+			msg.t = time.Unix(i, 0)
+		} else {
+			return err
+		}
+
+		if b, err := items[4].Bytes(); err == nil {
+			msg.b.Write(b)
+		} else {
+			return err
+		}
+	}
+
+	r := fmt.Sprintf("%s/%s", msg.fullpath(), msg.filename())
+
+	select {
+	case srv.C <- msg:
+		redis.NewResp(r).WriteTo(netCon)
+		return nil
+	default:
+	}
+
+	return errors.New("Channel full")
+}
+
+func (srv *Server) get(netCon net.Conn, items []*redis.Resp) (err error) {
+	msg := getMsg(srv)
+	defer putMsg(msg)
+
+	msg.project, err = items[1].Str()
+	if err != nil {
+		return err
+	}
+
+	msg.k, err = items[2].Str()
+	if err != nil {
+		return err
+	}
+
+	if len(items) == 4 {
+		if i, err := items[3].Int64(); err == nil {
+			msg.t = time.Unix(i, 0)
+		} else {
+			return err
+		}
+	}
+
+	var b []byte
+	b, err = msg.Bytes()
+	if err != nil {
+		return err
+	}
+
+	redis.NewResp(b).WriteTo(netCon)
+	return nil
 }

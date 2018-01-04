@@ -37,7 +37,6 @@ var (
 )
 
 func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
-	lib.Debugf("%#v", conf)
 	switch conf.Protocol {
 	case "redis", "redis2":
 		srv, err = redis2.New(conf, done)

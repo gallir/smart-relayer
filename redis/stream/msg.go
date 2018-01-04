@@ -26,33 +26,40 @@ const (
 
 func getMsg(srv *Server) *Msg {
 	m := msgPool.Get().(*Msg)
-	m.t = time.Now()
 	m.b = msgBytesPool.Get()
+
 	m.srv = srv
 	return m
 }
 
 func putMsg(m *Msg) {
+
 	msgBytesPool.Put(m.b)
 	m.b = nil
+
 	m.k = ""
+	m.project = ""
+	m.t = time.Now()
+
 	msgPool.Put(m)
 }
 
 type Msg struct {
 	project string
-	t       time.Time
 	k       string
+	t       time.Time
 	b       *bytebufferpool.ByteBuffer
 	srv     *Server
 }
 
 func (m *Msg) fullpath() string {
-	return m.srv.fullpath(m.project, m.t)
+	t := m.t
+	return m.srv.fullpath(m.project, t)
 }
 
 func (m *Msg) path() string {
-	return m.srv.path(m.project, m.t)
+	t := m.t
+	return m.srv.path(m.project, t)
 }
 
 func (m *Msg) filename() string {
