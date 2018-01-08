@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/service/firehose"
+	"github.com/gabrielperezs/firehose-pool"
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
 )
@@ -19,12 +19,9 @@ type Server struct {
 	done     chan bool
 	exiting  bool
 	reseting bool
-	failing  bool
 	listener net.Listener
 
-	clients        []*Client
-	recordsCh      chan *lib.InterRecord
-	awsSvc         *firehose.Firehose
+	fh             *firehosePool.Server
 	lastConnection time.Time
 	lastError      time.Time
 	errors         int64
@@ -59,6 +56,9 @@ func init() {
 		"SET":    respOK,
 		"SADD":   respOK,
 		"HMSET":  respOK,
+		"CSET":   respOK,
+		"CSADD":  respOK,
+		"CHMSET": respOK,
 		"RAWSET": respOK,
 	}
 }
@@ -66,9 +66,8 @@ func init() {
 // New creates a new Redis local server
 func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
-		done:      done,
-		errors:    0,
-		recordsCh: make(chan *lib.InterRecord, requestBufferSize),
+		done:   done,
+		errors: 0,
 	}
 
 	srv.Reload(&c)
@@ -87,7 +86,25 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.config.MaxConnections = maxConnections
 	}
 
-	go srv.retry()
+	if srv.config.Buffer == 0 {
+		srv.config.Buffer = requestBufferSize
+	}
+
+	fhConfig := firehosePool.Config{
+		Profile:       srv.config.Profile,
+		Region:        srv.config.Region,
+		StreamName:    srv.config.StreamName,
+		MaxWorkers:    srv.config.MaxConnections,
+		MaxRecords:    srv.config.MaxRecords,
+		Buffer:        srv.config.Buffer,
+		ConcatRecords: srv.config.Concat,
+	}
+
+	if srv.fh == nil {
+		srv.fh = firehosePool.New(fhConfig)
+	} else {
+		srv.fh.Reload(&fhConfig)
+	}
 
 	return nil
 }
@@ -135,34 +152,26 @@ func (srv *Server) Exit() {
 		srv.listener.Close()
 	}
 
-	for _, c := range srv.clients {
-		c.Exit()
-	}
+	go srv.fh.Exit()
 
-	lib.Debugf("Firehose: messages lost %d", len(srv.recordsCh))
+	srv.fh.Waiting()
 
 	// finishing the server
 	srv.done <- true
 }
 
-func (srv *Server) canSend() bool {
-	if srv.reseting || srv.exiting || srv.failing {
-		return false
-	}
-
-	return true
-}
-
 func (srv *Server) sendRecord(r *lib.InterRecord) {
-	if !srv.canSend() {
+	if srv.reseting || srv.exiting {
 		return
 	}
 
-	select {
-	case srv.recordsCh <- r:
-	default:
-		lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.recordsCh))
-	}
+	go func() {
+		select {
+		case srv.fh.C <- r.Bytes():
+		default:
+			lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.fh.C))
+		}
+	}()
 }
 
 func (srv *Server) sendBytes(b []byte) {
@@ -228,9 +237,16 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		case "EXEC":
 			multi = false
 			srv.sendRecord(row)
-		case "SET":
+		case "SET", "CSET":
 			k, _ := req.Items[1].Str()
-			v, _ := req.Items[2].Str()
+
+			var v interface{}
+			if req.Command == "CSET" {
+				v, _ = req.Items[2].Bytes()
+			} else {
+				v, _ = req.Items[2].Str()
+			}
+
 			if multi {
 				row.Add(k, v)
 			} else {
@@ -238,9 +254,16 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				row.Add(k, v)
 				srv.sendRecord(row)
 			}
-		case "SADD":
+		case "SADD", "CSADD":
 			k, _ := req.Items[1].Str()
-			v, _ := req.Items[2].Str()
+
+			var v interface{}
+			if req.Command == "CSADD" {
+				v, _ = req.Items[2].Bytes()
+			} else {
+				v, _ = req.Items[2].Str()
+			}
+
 			if multi {
 				row.Sadd(k, v)
 			} else {
@@ -248,10 +271,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				row.Sadd(k, v)
 				srv.sendRecord(row)
 			}
-		case "HMSET":
+		case "HMSET", "CHMSET":
 			var key string
 			var k string
-			var v string
+			var v interface{}
 
 			if !multi {
 				row = lib.NewInterRecord()
@@ -268,7 +291,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				if i%2 != 0 {
 					k, _ = o.Str()
 				} else {
-					v, _ = o.Str()
+					if req.Command == "CHMSET" {
+						v, _ = o.Bytes()
+					} else {
+						v, _ = o.Str()
+					}
 					row.Mhset(key, k, v)
 				}
 			}

@@ -33,12 +33,13 @@ type RelayerConfig struct {
 	Pipeline int // If > 0 it does pipelining (buffering)
 	Timeout  int // Timeout in seconds to wait for responses from the server
 
-	MaxRecords int     // To send in batch to Kinesis
-	StreamName string  // Kinesis/Firehose stream name
-	GroupID    string  // Group ID for AWS SQS fifo
-	Region     string  // AWS region
-	Profile    string  // AWS Profile name
-	Spin       float64 // % of ignored messages
+	MaxRecords int    // To send in batch to Kinesis
+	Buffer     int    // Size for the channel (queue for Kinesis/Firehose)
+	StreamName string // Kinesis/Firehose stream name
+	GroupID    string // Group ID for AWS SQS fifo
+	Region     string // AWS region
+	Profile    string // AWS Profile name
+	Concat     bool   // Kinesis/Firehose contact messages, valid just for S3 backend
 }
 
 func ReadConfig(filename string) (config *Config, err error) {
