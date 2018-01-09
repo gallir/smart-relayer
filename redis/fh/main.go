@@ -103,7 +103,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	if srv.fh == nil {
 		srv.fh = firehosePool.New(fhConfig)
 	} else {
-		srv.fh.Reload(&fhConfig)
+		go srv.fh.Reload(&fhConfig)
 	}
 
 	return nil
