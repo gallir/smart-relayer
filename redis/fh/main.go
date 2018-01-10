@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gabrielperezs/firehose-pool"
+	"github.com/gallir/firehose-pool"
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
 )
@@ -18,7 +18,6 @@ type Server struct {
 	config   lib.RelayerConfig
 	done     chan bool
 	exiting  bool
-	reseting bool
 	listener net.Listener
 
 	fh             *firehosePool.Server
@@ -161,17 +160,15 @@ func (srv *Server) Exit() {
 }
 
 func (srv *Server) sendRecord(r *lib.InterRecord) {
-	if srv.reseting || srv.exiting {
+	if srv.exiting {
 		return
 	}
 
-	go func() {
-		select {
-		case srv.fh.C <- r.Bytes():
-		default:
-			lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.fh.C))
-		}
-	}()
+	select {
+	case srv.fh.C <- r.Bytes():
+	default:
+		lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.fh.C))
+	}
 }
 
 func (srv *Server) sendBytes(b []byte) {
