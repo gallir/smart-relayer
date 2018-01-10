@@ -23,7 +23,6 @@ type Server struct {
 	fh             *firehosePool.Server
 	lastConnection time.Time
 	lastError      time.Time
-	errors         int64
 }
 
 const (
@@ -65,8 +64,7 @@ func init() {
 // New creates a new Redis local server
 func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
-		done:   done,
-		errors: 0,
+		done: done,
 	}
 
 	srv.Reload(&c)
