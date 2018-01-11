@@ -218,6 +218,8 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			continue
 		}
 
+		fastResponse.WriteTo(netCon)
+
 		switch req.Command {
 		case "RAWSET":
 			if multi || len(req.Items) > 2 {
@@ -298,11 +300,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if !multi {
 				srv.sendRecord(row)
 			}
-
 		}
-
-		fastResponse.WriteTo(netCon)
-		continue
-
 	}
 }
