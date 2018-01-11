@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gabrielperezs/firehose-pool"
+	"github.com/gallir/firehose-pool"
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
 )
@@ -18,13 +18,11 @@ type Server struct {
 	config   lib.RelayerConfig
 	done     chan bool
 	exiting  bool
-	reseting bool
 	listener net.Listener
 
 	fh             *firehosePool.Server
 	lastConnection time.Time
 	lastError      time.Time
-	errors         int64
 }
 
 const (
@@ -66,8 +64,7 @@ func init() {
 // New creates a new Redis local server
 func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
-		done:   done,
-		errors: 0,
+		done: done,
 	}
 
 	srv.Reload(&c)
@@ -103,7 +100,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	if srv.fh == nil {
 		srv.fh = firehosePool.New(fhConfig)
 	} else {
-		srv.fh.Reload(&fhConfig)
+		go srv.fh.Reload(&fhConfig)
 	}
 
 	return nil
@@ -161,17 +158,15 @@ func (srv *Server) Exit() {
 }
 
 func (srv *Server) sendRecord(r *lib.InterRecord) {
-	if srv.reseting || srv.exiting {
+	if srv.exiting {
 		return
 	}
 
-	go func() {
-		select {
-		case srv.fh.C <- r.Bytes():
-		default:
-			lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.fh.C))
-		}
-	}()
+	select {
+	case srv.fh.C <- r.Bytes():
+	default:
+		lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.fh.C))
+	}
 }
 
 func (srv *Server) sendBytes(b []byte) {
@@ -222,6 +217,8 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			respBadCommand.WriteTo(netCon)
 			continue
 		}
+
+		fastResponse.WriteTo(netCon)
 
 		switch req.Command {
 		case "RAWSET":
@@ -303,11 +300,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if !multi {
 				srv.sendRecord(row)
 			}
-
 		}
-
-		fastResponse.WriteTo(netCon)
-		continue
-
 	}
 }
