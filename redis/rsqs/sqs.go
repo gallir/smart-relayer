@@ -37,8 +37,6 @@ func (srv *Server) retry() {
 	srv.Lock()
 	defer srv.Unlock()
 
-	srv.failing = true
-
 	if srv.clientsReset() == nil {
 		return
 	}
@@ -47,6 +45,7 @@ func (srv *Server) retry() {
 	log.Printf("SQS ERROR: %d attempts to connect to SQS: %s", srv.tries, srv.config.URL)
 
 	if srv.tries >= maxConnectionsTries {
+		srv.failing = true
 		time.Sleep(connectionRetry * 2)
 	} else {
 		time.Sleep(connectionRetry)
@@ -87,11 +86,9 @@ func (srv *Server) clientsReset() (err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
 
-	i := &sqs.GetQueueAttributesInput{
+	req, _ := srv.awsSvc.GetQueueAttributesRequest(&sqs.GetQueueAttributesInput{
 		QueueUrl: &srv.config.URL,
-	}
-
-	req, _ := srv.awsSvc.GetQueueAttributesRequest(i)
+	})
 	req.SetContext(ctx)
 	if err := req.Send(); err != nil {
 		log.Printf("SQS ERROR: getAttributes: %s: %s", srv.config.URL, err)
@@ -115,7 +112,9 @@ func (srv *Server) clientsReset() (err error) {
 	if currClients > srv.config.MaxConnections {
 		for i := currClients; i > srv.config.MaxConnections; i-- {
 			k := i - 1
-			srv.clients[k].Exit()
+			// Exiting client without block
+			go srv.clients[k].Exit()
+			srv.clients[k] = nil
 			srv.clients = append(srv.clients[:k], srv.clients[k+1:]...)
 		}
 		atomic.StoreInt64(&clientCount, int64(len(srv.clients)))
