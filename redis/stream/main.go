@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -41,11 +42,10 @@ var (
 var (
 	errBadCmd      = errors.New("ERR bad command")
 	errKO          = errors.New("fatal error")
-	errOverloaded  = errors.New("Redis overloaded")
-	errSet         = errors.New("ERR - syntax: project key [timestamp] value")
-	errGet         = errors.New("ERR - syntax: project key [timestamp]")
+	errSet         = errors.New("ERR - syntax: SET project key [timestamp] value")
+	errGet         = errors.New("ERR - syntax: GET project key [timestamp]")
 	errChanFull    = errors.New("ERR - The file can't be created")
-	errNotFound    = errors.New("ERR - Key not found")
+	errNotFound    = errors.New("KO - Key not found")
 	respOK         = redis.NewRespSimple("OK")
 	respTrue       = redis.NewResp(1)
 	respBadCommand = redis.NewResp(errBadCmd)
@@ -239,7 +239,12 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			}
 
 			if err := srv.set(netCon, req.Items); err != nil {
-				respBadSet.WriteTo(netCon)
+				switch err {
+				case err.(*os.PathError):
+					respNotFound.WriteTo(netCon)
+				default:
+					redis.NewResp(err).WriteTo(netCon)
+				}
 			}
 
 		case "GET":
@@ -250,7 +255,12 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			}
 
 			if err := srv.get(netCon, req.Items); err != nil {
-				respBadGet.WriteTo(netCon)
+				switch err {
+				case err.(*os.PathError):
+					respNotFound.WriteTo(netCon)
+				default:
+					redis.NewResp(err).WriteTo(netCon)
+				}
 			}
 
 		default:
@@ -333,7 +343,7 @@ func (srv *Server) get(netCon net.Conn, items []*redis.Resp) (err error) {
 		return err
 	}
 
-	if len(items) == 4 {
+	if len(items) > 3 {
 		if i, err := items[3].Int64(); err == nil {
 			msg.t = time.Unix(i, 0)
 		} else {
