@@ -17,9 +17,9 @@ import (
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/cluster"
 	"github.com/gallir/smart-relayer/redis/fh"
+	"github.com/gallir/smart-relayer/redis/fs"
 	"github.com/gallir/smart-relayer/redis/radix"
 	"github.com/gallir/smart-relayer/redis/rsqs"
-	"github.com/gallir/smart-relayer/redis/stream"
 )
 
 const (
@@ -47,7 +47,7 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 	case "sqs":
 		srv, err = rsqs.New(conf, done)
 	case "stream":
-		srv, err = stream.New(conf, done)
+		srv, err = fs.New(conf, done)
 	default:
 		err = errors.New("no valid option")
 	}

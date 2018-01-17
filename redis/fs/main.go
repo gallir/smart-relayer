@@ -1,4 +1,4 @@
-package stream
+package fs
 
 import (
 	"errors"
@@ -125,7 +125,8 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	if lw > srv.config.MaxConnections {
 		for i := srv.config.MaxConnections; i < lw; i++ {
 			w := <-srv.writers
-			w.exit()
+			// exit without block
+			go w.exit()
 		}
 		return nil
 	}

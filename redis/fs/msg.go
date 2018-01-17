@@ -1,4 +1,4 @@
-package stream
+package fs
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gallir/bytebufferpool"
-	"github.com/gallir/smart-relayer/redis/stream/ifaceS3"
+	"github.com/gallir/smart-relayer/redis/fs/ifaceS3"
 )
 
 var (

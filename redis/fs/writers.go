@@ -1,4 +1,4 @@
-package stream
+package fs
 
 import (
 	"fmt"
@@ -37,9 +37,7 @@ func (w *writer) listen() {
 				w.srv.C <- m
 			}
 		case <-w.done:
-			if len(w.srv.C) == 0 {
-				return
-			}
+			return
 		}
 	}
 }
