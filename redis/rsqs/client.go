@@ -32,11 +32,10 @@ type Client struct {
 	buff        []byte
 	batch       []*sqs.SendMessageBatchRequestEntry
 	batchSize   int
-	status      int
 	finish      chan bool
 	done        chan bool
 	ID          int
-	tick        *time.Ticker
+	timer       *time.Timer
 	lastFlushed time.Time
 }
 
@@ -47,41 +46,23 @@ func NewClient(srv *Server) *Client {
 	clt := &Client{
 		done:   make(chan bool),
 		finish: make(chan bool),
-		status: 0,
 		srv:    srv,
 		ID:     int(n),
-		tick:   time.NewTicker(recordsTimeout),
+		timer:  time.NewTimer(recordsTimeout),
 	}
 
-	if err := clt.Reload(); err != nil {
-		lib.Debugf("SQS client %d ERROR: reload %s", clt.ID, err)
-		return nil
-	}
+	go clt.listen()
 
 	lib.Debugf("SQS client %d ready", clt.ID)
 
 	return clt
 }
 
-// Reload finish the listener and run it again
-func (clt *Client) Reload() error {
-	clt.Lock()
-	defer clt.Unlock()
-
-	if clt.status > 0 {
-		clt.Exit()
-	}
-
-	go clt.listen()
-
-	return nil
-}
-
 func (clt *Client) append(r *lib.InterRecord) error {
 	s, id := r.StringUniqID()
 
 	// The maximum is 262,144 bytes (256 KB)
-	if len(s) >= maxRecordSize {
+	if len(s) > maxRecordSize {
 		// Save in new record
 		e := fmt.Sprintf("SQS ERROR: the message is over %dKB can't be send", maxRecordSize/1024)
 		return errors.New(e)
@@ -100,8 +81,6 @@ func (clt *Client) append(r *lib.InterRecord) error {
 }
 
 func (clt *Client) listen() {
-	clt.status = 1
-
 	for {
 
 		select {
@@ -127,18 +106,26 @@ func (clt *Client) listen() {
 			}
 
 			// Limits control
-			if len(clt.batch) >= clt.srv.config.MaxRecords {
+			if len(clt.batch)+1 >= clt.srv.config.MaxRecords {
 				// Force flush
 				clt.flush()
 			}
 
 			clt.append(r)
 
-		case <-clt.tick.C:
-			if time.Since(clt.lastFlushed) >= recordsTimeout && (len(clt.buff) > 0 || len(clt.batch) > 0) {
-				clt.flush()
-			}
+		case <-clt.timer.C:
+			clt.flush()
+
 		case <-clt.done:
+			clt.flush()
+
+			// Stop and drain the timer channel
+			if !clt.timer.Stop() {
+				select {
+				case <-clt.timer.C:
+				default:
+				}
+			}
 			clt.finish <- true
 			return
 		}
@@ -147,7 +134,13 @@ func (clt *Client) listen() {
 
 // flush build the last record if need and send the records slice to AWS SQS
 func (clt *Client) flush() {
-	clt.lastFlushed = time.Now()
+	if !clt.timer.Stop() {
+		select {
+		case <-clt.timer.C:
+		default:
+		}
+	}
+	clt.timer.Reset(recordsTimeout)
 
 	// Don't send empty batch
 	if len(clt.batch) == 0 {
@@ -198,6 +191,4 @@ func (clt *Client) Exit() {
 
 	clt.done <- true
 	<-clt.finish
-
-	clt.flush()
 }

@@ -161,7 +161,8 @@ func (srv *Server) Exit() {
 	}
 
 	for _, c := range srv.clients {
-		c.Exit()
+		// Exiting without block
+		go c.Exit()
 	}
 
 	if len(srv.recordsCh) > 0 {
@@ -173,7 +174,10 @@ func (srv *Server) Exit() {
 }
 
 func (srv *Server) canSend() bool {
-	if srv.reseting || srv.exiting || srv.failing {
+	srv.Lock()
+	defer srv.Unlock()
+
+	if srv.exiting || srv.failing {
 		return false
 	}
 
