@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gallir/firehose-pool"
+	"github.com/gabrielperezs/firehose-pool"
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
 )
