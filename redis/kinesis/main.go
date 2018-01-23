@@ -1,4 +1,4 @@
-package fh
+package kinesis
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gabrielperezs/firehose-pool/firehose"
+	"github.com/gabrielperezs/firehose-pool/kinesis"
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
 )
@@ -20,7 +20,7 @@ type Server struct {
 	exiting  bool
 	listener net.Listener
 
-	fh             *firehosePool.Server
+	ks             *kinesisPool.Server
 	lastConnection time.Time
 	lastError      time.Time
 }
@@ -87,7 +87,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.config.Buffer = requestBufferSize
 	}
 
-	fhConfig := firehosePool.Config{
+	knConfig := kinesisPool.Config{
 		Profile:       srv.config.Profile,
 		Region:        srv.config.Region,
 		StreamName:    srv.config.StreamName,
@@ -97,10 +97,10 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		ConcatRecords: srv.config.Concat,
 	}
 
-	if srv.fh == nil {
-		srv.fh = firehosePool.New(fhConfig)
+	if srv.ks == nil {
+		srv.ks = kinesisPool.New(knConfig)
 	} else {
-		go srv.fh.Reload(&fhConfig)
+		go srv.ks.Reload(&knConfig)
 	}
 
 	return nil
@@ -149,9 +149,9 @@ func (srv *Server) Exit() {
 		srv.listener.Close()
 	}
 
-	go srv.fh.Exit()
+	go srv.ks.Exit()
 
-	srv.fh.Waiting()
+	srv.ks.Waiting()
 
 	// finishing the server
 	srv.done <- true
@@ -163,9 +163,9 @@ func (srv *Server) sendRecord(r *lib.InterRecord) {
 	}
 
 	select {
-	case srv.fh.C <- r.Bytes():
+	case srv.ks.C <- r.Bytes():
 	default:
-		lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.fh.C))
+		lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.ks.C))
 	}
 }
 

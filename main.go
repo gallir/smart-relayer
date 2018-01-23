@@ -18,12 +18,13 @@ import (
 	"github.com/gallir/smart-relayer/redis/cluster"
 	"github.com/gallir/smart-relayer/redis/fh"
 	"github.com/gallir/smart-relayer/redis/fs"
+	"github.com/gallir/smart-relayer/redis/kinesis"
 	"github.com/gallir/smart-relayer/redis/radix"
 	"github.com/gallir/smart-relayer/redis/rsqs"
 )
 
 const (
-	version = "9.0.0-dev"
+	version = "9.1.0-dev"
 )
 
 var (
@@ -44,9 +45,11 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 		srv, err = cluster.New(conf, done)
 	case "firehose":
 		srv, err = fh.New(conf, done)
+	case "kinesis":
+		srv, err = kinesis.New(conf, done)
 	case "sqs":
 		srv, err = rsqs.New(conf, done)
-	case "stream":
+	case "fs":
 		srv, err = fs.New(conf, done)
 	default:
 		err = errors.New("no valid option")
