@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+const (
+	retryWriter = 2 * time.Second
+)
+
 type writer struct {
 	srv  *Server
 	done chan bool
@@ -33,7 +37,7 @@ func (w *writer) listen() {
 				putMsg(m)
 			} else {
 				// send message back to the channel
-				time.Sleep(5 * time.Second)
+				time.Sleep(retryWriter)
 				w.srv.C <- m
 			}
 		case <-w.done:

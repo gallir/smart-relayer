@@ -187,7 +187,7 @@ func (srv *Server) Exit() {
 	// Close the channel were we store the active writers
 	close(srv.writers)
 	for w := range srv.writers {
-		go w.exit()
+		w.exit()
 	}
 
 	// Close the main channel, all writers will finish
@@ -241,13 +241,13 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 			if err := srv.set(netCon, req.Items); err != nil {
 				switch err {
-				case err.(*os.PathError):
-					respNotFound.WriteTo(netCon)
+				case errChanFull:
+					respChanFull.WriteTo(netCon)
 				default:
+					log.Printf("FS ERROR SET: %s", err)
 					redis.NewResp(err).WriteTo(netCon)
 				}
 			}
-
 		case "GET":
 			// GET project key [timestamp]
 			if len(req.Items) <= 2 || len(req.Items) > 4 {
@@ -260,10 +260,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				case err.(*os.PathError):
 					respNotFound.WriteTo(netCon)
 				default:
+					log.Printf("FS ERROR GET: %s", err)
 					redis.NewResp(err).WriteTo(netCon)
 				}
 			}
-
 		default:
 			log.Panicf("Invalid command: This never should happen, check the cases or the list of valid command")
 
@@ -327,7 +327,7 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	default:
 	}
 
-	return errors.New("Channel full")
+	return errChanFull
 }
 
 func (srv *Server) get(netCon net.Conn, items []*redis.Resp) (err error) {
