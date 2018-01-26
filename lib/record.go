@@ -2,26 +2,15 @@ package lib
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/gallir/bytebufferpool"
-	gzip "github.com/klauspost/pgzip"
 	"github.com/pquerna/ffjson/ffjson"
 	"github.com/spaolacci/murmur3"
 )
 
 var compressPool = &bytebufferpool.Pool{}
-
-// GzipPool is Pool for gzip
-var GzipPool = sync.Pool{
-	New: func() interface{} {
-		w, _ := gzip.NewWriterLevel(ioutil.Discard, gzip.BestCompression)
-		return w
-	},
-}
 
 type InterRecord struct {
 	Types          int                    `json:"type,omitempty"`
@@ -88,15 +77,12 @@ func (r *InterRecord) Bytes() []byte {
 		buffs = append(buffs, b)
 
 		// Get a gzip from the pull, write in the buffer and return to the pool
-		w := GzipPool.Get().(*gzip.Writer)
-		// Reset the compressor linking with the new buffer
-		w.Reset(b)
+		w := GetGzipWriter(b)
 		w.Write(o)
 		w.Close()
 
 		// Unlink the buffer for the gzip before return to the pool, just in case..?
-		w.Reset(ioutil.Discard)
-		GzipPool.Put(w)
+		PutGzipWriter(w)
 
 		return b.B
 	}

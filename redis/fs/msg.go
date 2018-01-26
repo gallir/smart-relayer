@@ -2,13 +2,14 @@ package fs
 
 import (
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/gallir/bytebufferpool"
-	"github.com/gallir/smart-relayer/redis/fs/ifaceS3"
+	"github.com/gallir/smart-relayer/lib"
 )
 
 var (
@@ -20,8 +21,9 @@ var (
 	}
 )
 
-const (
-	ext = "log"
+var (
+	extPlain = "log"
+	extGz    = "log.gz"
 )
 
 func getMsg(srv *Server) *Msg {
@@ -63,35 +65,70 @@ func (m *Msg) path() string {
 }
 
 func (m *Msg) filename() string {
-	return fmt.Sprintf("%s.%s", m.k, ext)
+	if m.srv.config.Compress {
+		return m.filenameGz()
+	}
+	return m.filenamePlain()
+}
+
+func (m *Msg) filenameGz() string {
+	return fmt.Sprintf("%s.%s", m.k, extGz)
+}
+
+func (m *Msg) filenamePlain() string {
+	return fmt.Sprintf("%s.%s", m.k, extPlain)
 }
 
 func (m *Msg) Bytes() (b []byte, err error) {
 
-	b, err = m.bytesFile()
-	return b, err
+	if m.srv.config.Compress {
+		b, err = m.bytesFile(fmt.Sprintf("%s/%s", m.fullpath(), m.filenameGz()), true)
+		if err == nil {
+			return
+		}
+		// If the file is empty, that means the file exists so we return here
+		if err == io.EOF {
+			return
+		}
+	}
 
-	// for future releases read from S3
-	// b, err = m.bytesS3()
-	// return b, err
+	b, err = m.bytesFile(fmt.Sprintf("%s/%s", m.fullpath(), m.filenamePlain()), false)
+	return
 }
 
-func (m *Msg) bytesFile() ([]byte, error) {
-	// Build the path + filename
-	filename := fmt.Sprintf("%s/%s", m.fullpath(), m.filename())
-
+func (m *Msg) bytesFile(filename string, gz bool) ([]byte, error) {
 	file, err := os.Open(filename)
 	if err != nil {
+		if err == io.EOF {
+			file.Close()
+		}
 		return nil, err
 	}
 	defer file.Close()
 
-	b, _ := ioutil.ReadAll(file)
+	if !gz {
+		return ioutil.ReadAll(file)
+	}
 
-	return b, nil
-}
+	// Check if is possible to read the metadata of the file
+	fi, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
 
-func (m *Msg) bytesS3() ([]byte, error) {
-	r := ifaceS3.NewReaderUncompress(m.srv.s3sess, m.srv.config.S3Bucket)
-	return r.Get(fmt.Sprintf("%s/records-1.tar.gz", m.path()))
+	// If the file is empty we return as EOF because can cause issues
+	// to the gzipReader. Something to check with more detail...
+	if fi.Size() == 0 {
+		return nil, io.EOF
+	}
+
+	zr, err := lib.GetGzipReader(file)
+	defer lib.PutGzipReader(zr)
+	if err != nil {
+		return nil, err
+	}
+
+	defer zr.Close()
+
+	return ioutil.ReadAll(zr)
 }

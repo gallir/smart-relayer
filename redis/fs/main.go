@@ -119,6 +119,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	lw := len(srv.writers)
 
 	if lw == srv.config.MaxConnections {
+		log.Printf("FS: concurrent writers %d", lw)
 		return nil
 	}
 
@@ -128,6 +129,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 			// exit without block
 			go w.exit()
 		}
+		log.Printf("FS: colddown concurrent writers %d", srv.config.MaxConnections)
 		return nil
 	}
 
@@ -135,6 +137,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		for i := lw; i < srv.config.MaxConnections; i++ {
 			srv.writers <- newWriter(srv)
 		}
+		log.Printf("FS: warmup concurrent writers %d", len(srv.writers))
 		return nil
 	}
 
@@ -273,7 +276,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 }
 
 func (srv *Server) fullpath(project string, t time.Time) string {
-	return fmt.Sprintf("%s/%s/%d/%.2d/%.2d/%.2d/%.2d", srv.config.Path, project, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute())
+	return fmt.Sprintf("%s/%s", srv.config.Path, srv.path(project, t))
 }
 
 func (srv *Server) path(project string, t time.Time) string {

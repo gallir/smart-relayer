@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"github.com/gallir/smart-relayer/lib"
 )
 
 const (
@@ -62,8 +64,24 @@ func (w *writer) writeTo(m *Msg) error {
 	}
 	defer newFile.Close()
 
-	if _, err := m.b.WriteTo(newFile); err != nil {
-		log.Printf("File ERROR: writing log: %s", err)
+	// If the compression is NOT enabled then just write into the file
+	// and return
+	if !w.srv.config.Compress {
+		if _, err := m.b.WriteTo(newFile); err != nil {
+			log.Printf("File ERROR: writing log: %s", err)
+			return err
+		}
+		return nil
+	}
+
+	// If the compression is ON we request a gzip.Writer from the pool
+	// and use the Write operations of this struct
+	zw := lib.GetGzipWriter(newFile)
+	defer lib.PutGzipWriter(zw)
+	defer zw.Close()
+
+	if _, err := m.b.WriteTo(zw); err != nil {
+		log.Printf("File ERROR: gzip writing log: %s", err)
 		return err
 	}
 

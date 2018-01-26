@@ -2,13 +2,13 @@ package ifaceS3
 
 import (
 	"archive/tar"
+	"compress/gzip"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 
 	"github.com/gallir/smart-relayer/lib"
-	gzip "github.com/klauspost/pgzip"
 )
 
 // NewWriteCompress create a pointer and start the temp file and the gz interface
@@ -49,8 +49,7 @@ func (s *WriteCompress) start() (err error) {
 		return
 	}
 
-	s.gz = lib.GzipPool.Get().(*gzip.Writer)
-	s.gz.Reset(s.tmp)
+	s.gz = lib.GetGzipWriter(s.tmp)
 	s.gz.Name = fmt.Sprintf("records-%d.csv", s.id)
 
 	s.t = tar.NewWriter(s.gz)
@@ -92,9 +91,8 @@ func (s *WriteCompress) Close() (err error) {
 		return
 	}
 
-	// Point the the gz interface to /dev/null and return it to the pool
-	s.gz.Reset(ioutil.Discard)
-	lib.GzipPool.Put(s.gz)
+	// return it to the pool
+	lib.PutGzipWriter(s.gz)
 	s.gz = nil
 
 	if s.fn == nil {
