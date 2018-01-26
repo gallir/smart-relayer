@@ -46,7 +46,7 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 		srv, err = fh.New(conf, done)
 	case "sqs":
 		srv, err = rsqs.New(conf, done)
-	case "stream":
+	case "fs":
 		srv, err = fs.New(conf, done)
 	default:
 		err = errors.New("no valid option")
