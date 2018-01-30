@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"compress/gzip"
 	"fmt"
 	"log"
 	"os"
@@ -74,10 +75,8 @@ func (w *writer) writeTo(m *Msg) error {
 		return nil
 	}
 
-	// If the compression is ON we request a gzip.Writer from the pool
-	// and use the Write operations of this struct
-	zw := lib.GetGzipWriter(newFile)
-	defer lib.PutGzipWriter(zw)
+	// If the compression is ON
+	zw, _ := gzip.NewWriterLevel(newFile, lib.GzCompressionLevel)
 	defer zw.Close()
 
 	if _, err := m.b.WriteTo(zw); err != nil {
