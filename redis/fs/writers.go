@@ -11,7 +11,8 @@ import (
 )
 
 const (
-	retryWriter = 2 * time.Second
+	retryWriter        = 2 * time.Second
+	minSizeForCompress = 512
 )
 
 type writer struct {
@@ -56,7 +57,15 @@ func (w *writer) writeTo(m *Msg) error {
 		return err
 	}
 
-	fileName := fmt.Sprintf("%s/%s", dirName, m.filename())
+	var fileName string
+	if !w.srv.config.Compress || m.b.Len() <= minSizeForCompress {
+		// Use the file name without .gz extension if the compression is
+		// not active or if the size is smaller than 512 bytes (minSizeForCompress)
+		fileName = fmt.Sprintf("%s/%s", dirName, m.filenamePlain())
+	} else {
+		// Use the extension .gz in the file name if is able to use the compression
+		fileName = fmt.Sprintf("%s/%s", dirName, m.filenameGz())
+	}
 
 	newFile, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
@@ -65,9 +74,9 @@ func (w *writer) writeTo(m *Msg) error {
 	}
 	defer newFile.Close()
 
-	// If the compression is NOT enabled then just write into the file
-	// and return
-	if !w.srv.config.Compress {
+	// Use the compression if is active in the configuration and the message
+	// is bigger than 512 bytes (minSizeForCompress)
+	if !w.srv.config.Compress || m.b.Len() <= minSizeForCompress {
 		if _, err := m.b.WriteTo(newFile); err != nil {
 			log.Printf("File ERROR: writing log: %s", err)
 			return err
