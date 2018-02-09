@@ -17,12 +17,14 @@ import (
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/cluster"
 	"github.com/gallir/smart-relayer/redis/fh"
+	"github.com/gallir/smart-relayer/redis/fs"
+	"github.com/gallir/smart-relayer/redis/kinesis"
 	"github.com/gallir/smart-relayer/redis/radix"
 	"github.com/gallir/smart-relayer/redis/rsqs"
 )
 
 const (
-	version = "8.2.1"
+	version = "8.3.1"
 )
 
 var (
@@ -43,8 +45,12 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 		srv, err = cluster.New(conf, done)
 	case "firehose":
 		srv, err = fh.New(conf, done)
+	case "kinesis":
+		srv, err = kinesis.New(conf, done)
 	case "sqs":
 		srv, err = rsqs.New(conf, done)
+	case "fs":
+		srv, err = fs.New(conf, done)
 	default:
 		err = errors.New("no valid option")
 	}
@@ -73,6 +79,8 @@ func startOrReload() bool {
 	if redis.UsePool > 0 {
 		log.Println("Set UsePool to", redis.UsePool)
 	}
+
+	lib.Debugf("%#v", newConf.Relayer)
 
 	newEndpoints := make(map[string]bool)
 
