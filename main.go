@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/gallir/radix.improved/redis"
+	"github.com/gallir/smart-relayer/http"
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/cluster"
 	"github.com/gallir/smart-relayer/redis/fh"
@@ -51,6 +52,8 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 		srv, err = rsqs.New(conf, done)
 	case "fs":
 		srv, err = fs.New(conf, done)
+	case "http":
+		srv, err = http.New(conf, done)
 	default:
 		err = errors.New("no valid option")
 	}

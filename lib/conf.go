@@ -29,6 +29,9 @@ type RelayerConfig struct {
 	MaxIdleConnections int    // Pool management
 	Compress           bool
 	Uncompress         bool
+
+	UseBufferPool bool // used by the http proxy, enable or diable buffer pool
+
 	//	Parallel           bool // For redis-cluster, send parallel requests
 	Pipeline int // If > 0 it does pipelining (buffering)
 	Timeout  int // Timeout in seconds to wait for responses from the server
