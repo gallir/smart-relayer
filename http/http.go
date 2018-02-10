@@ -1,3 +1,16 @@
+// This is a reverse proxy that's useful for keeping persisten connections
+// with the backend/load balancer.
+// Configuration example:
+//
+// [[relayer]]
+// protocol = "http"
+// usebufferpool = true
+// listen = ":9000"
+// url = "http://getrates.aws.dotw.com"
+// maxIdleConnections = 40
+// timeout = 15
+// compress = false
+
 package http
 
 import (
