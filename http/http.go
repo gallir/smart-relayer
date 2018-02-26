@@ -37,6 +37,7 @@ type HttpProxy struct {
 	sync.Mutex
 	target     *url.URL
 	listen     string
+	limiter    *limitHandler
 	proxy      *httputil.ReverseProxy
 	transport  *http.Transport
 	server     *http.Server
@@ -56,6 +57,8 @@ func New(c lib.RelayerConfig, done chan bool) (*HttpProxy, error) {
 		Transport: s.transport,
 	}
 
+	s.limiter = newLimitHandler(s.proxy)
+
 	err := s.Reload(&c)
 	if err != nil {
 		log.Println("E: Error to", s.target, err)
@@ -71,6 +74,8 @@ func (s *HttpProxy) Reload(c *lib.RelayerConfig) error {
 	defer s.Unlock()
 
 	s.listen = c.Listen
+
+	s.limiter.MaxConns(c.MaxConnections)
 
 	if !c.Compress {
 		s.transport.DisableCompression = true
@@ -111,7 +116,7 @@ func (s *HttpProxy) Start() error {
 	if s.server == nil {
 		s.server = &http.Server{
 			Addr:           s.listen,
-			Handler:        s.proxy,
+			Handler:        s.limiter,
 			ReadTimeout:    10 * time.Second,
 			WriteTimeout:   10 * time.Second,
 			MaxHeaderBytes: 1 << 20,
@@ -162,4 +167,51 @@ func (p *Pool) Get() []byte {
 // Put a []byte into the pool
 func (p *Pool) Put(b []byte) {
 	p.pool.Put(b)
+}
+
+// Connection limit handler
+type limitHandler struct {
+	sync.Mutex
+	sem     chan struct{}
+	handler http.Handler
+}
+
+func newLimitHandler(handler http.Handler) *limitHandler {
+	h := &limitHandler{
+		handler: handler,
+	}
+	return h
+}
+
+func (h *limitHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	h.Lock()
+	sem := h.sem
+	h.Unlock()
+
+	if sem == nil {
+		h.handler.ServeHTTP(w, req)
+		return
+	}
+	sem <- struct{}{}
+	h.handler.ServeHTTP(w, req)
+	<-sem
+}
+
+func (h *limitHandler) MaxConns(maxConns int) {
+	h.Lock()
+	defer h.Unlock()
+
+	if h.sem != nil && maxConns == cap(h.sem) {
+		return
+	}
+
+	if maxConns <= 0 {
+		if h.sem != nil {
+			h.sem = nil
+		}
+		return
+	}
+
+	h.sem = make(chan struct{}, maxConns)
+
 }
