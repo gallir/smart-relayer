@@ -27,7 +27,7 @@ for ($c = 1; $c<=$limit; $c++) {
         default:
             // SET
             $value = json_encode(array("a"=>"text to check", "rand"=>randString(rand(100*1024,200*1024))));
-            $key = sha1($value);
+            $key = time()."-".sha1($value);
             $response = phpiredis_command_bs($cli, array("SET", "testing", $key, time(), $value));
             printf("R: %s\n", $response);
             if (substr($response, 0, 3) == "ERR") {

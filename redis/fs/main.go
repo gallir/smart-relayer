@@ -104,12 +104,22 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.C = make(chan *Msg, srv.config.Buffer)
 	}
 
-	if sess, err := session.NewSessionWithOptions(session.Options{
-		Profile: srv.config.Profile,
-		Config: aws.Config{
-			Region: &srv.config.Region,
-		},
-	}); err == nil {
+	var awsOpt session.Options
+	if srv.config.Profile != "" {
+		awsOpt = session.Options{
+			Profile: srv.config.Profile,
+			Config: aws.Config{
+				Region: &srv.config.Region,
+			},
+		}
+	} else {
+		awsOpt = session.Options{
+			Config: aws.Config{
+				Region: &srv.config.Region,
+			},
+		}
+	}
+	if sess, err := session.NewSessionWithOptions(awsOpt); err == nil {
 		srv.s3sess = sess
 	} else {
 		log.Printf("ERROR: invalid S3 session: %s", err)
@@ -119,6 +129,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	lw := len(srv.writers)
 
 	if lw == srv.config.MaxConnections {
+		log.Printf("FS: concurrent writers %d", lw)
 		return nil
 	}
 
@@ -128,6 +139,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 			// exit without block
 			go w.exit()
 		}
+		log.Printf("FS: colddown concurrent writers %d", srv.config.MaxConnections)
 		return nil
 	}
 
@@ -135,6 +147,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		for i := lw; i < srv.config.MaxConnections; i++ {
 			srv.writers <- newWriter(srv)
 		}
+		log.Printf("FS: warmup concurrent writers %d", len(srv.writers))
 		return nil
 	}
 
@@ -277,7 +290,7 @@ func (srv *Server) fullpath(project string, t time.Time) string {
 }
 
 func (srv *Server) path(project string, t time.Time) string {
-	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d/%.2d", project, t.UTC().Year(), t.UTC().Month(), t.UTC().Day(), t.UTC().Hour(), t.UTC().Minute())
+	return fmt.Sprintf("%s/%.2d", srv.hourpath(project, t), t.UTC().Minute())
 }
 
 func (srv *Server) hourpath(project string, t time.Time) string {
@@ -361,8 +374,6 @@ func (srv *Server) get(netCon net.Conn, items []*redis.Resp) (err error) {
 	if err != nil {
 		return err
 	}
-
-	log.Printf("%#v", msg)
 
 	redis.NewResp(b).WriteTo(netCon)
 	return nil
