@@ -62,6 +62,11 @@ func (m *Msg) path() string {
 	return m.srv.path(m.project, t)
 }
 
+func (m *Msg) hourpath() string {
+	t := m.t
+	return m.srv.hourpath(m.project, t)
+}
+
 func (m *Msg) filename() string {
 	return fmt.Sprintf("%s.%s", m.k, ext)
 }
@@ -69,11 +74,12 @@ func (m *Msg) filename() string {
 func (m *Msg) Bytes() (b []byte, err error) {
 
 	b, err = m.bytesFile()
-	return b, err
+	if err == nil {
+		return b, err
+	}
 
-	// for future releases read from S3
-	// b, err = m.bytesS3()
-	// return b, err
+	b, err = m.bytesS3()
+	return b, err
 }
 
 func (m *Msg) bytesFile() ([]byte, error) {
@@ -93,5 +99,5 @@ func (m *Msg) bytesFile() ([]byte, error) {
 
 func (m *Msg) bytesS3() ([]byte, error) {
 	r := ifaceS3.NewReaderUncompress(m.srv.s3sess, m.srv.config.S3Bucket)
-	return r.Get(fmt.Sprintf("%s/records-1.tar.gz", m.path()))
+	return r.Get(m.k, m.hourpath(), m.t)
 }

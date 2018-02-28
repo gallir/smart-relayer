@@ -273,11 +273,15 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 }
 
 func (srv *Server) fullpath(project string, t time.Time) string {
-	return fmt.Sprintf("%s/%s/%d/%.2d/%.2d/%.2d/%.2d", srv.config.Path, project, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute())
+	return fmt.Sprintf("%s/%s", srv.config.Path, srv.path(project, t))
 }
 
 func (srv *Server) path(project string, t time.Time) string {
-	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d/%.2d", project, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute())
+	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d/%.2d", project, t.UTC().Year(), t.UTC().Month(), t.UTC().Day(), t.UTC().Hour(), t.UTC().Minute())
+}
+
+func (srv *Server) hourpath(project string, t time.Time) string {
+	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d", project, t.UTC().Year(), t.UTC().Month(), t.UTC().Day(), t.UTC().Hour())
 }
 
 func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
@@ -357,6 +361,8 @@ func (srv *Server) get(netCon net.Conn, items []*redis.Resp) (err error) {
 	if err != nil {
 		return err
 	}
+
+	log.Printf("%#v", msg)
 
 	redis.NewResp(b).WriteTo(netCon)
 	return nil
