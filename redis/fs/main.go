@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/gabrielperezs/monad"
 
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
@@ -26,7 +27,9 @@ type Server struct {
 	listener net.Listener
 	C        chan *Msg
 
+	desired int
 	writers chan *writer
+	monad   *monad.Monad
 
 	lastError time.Time
 	errors    int64
@@ -56,9 +59,13 @@ var (
 	respNotFound   = redis.NewResp(errNotFound)
 	commands       map[string]*redis.Resp
 
-	defaultMaxWriters = 100
-	defaultBuffer     = 1024
-	defaultPath       = "/tmp"
+	defaultMinWriters            = 5
+	defaultMaxWriters            = 1000
+	defaultInterval              = 500 * time.Millisecond
+	defaultWriterCooldown        = 15 * time.Second
+	defaultWriterThresholdWarmUp = 40.0 // percent
+	defaultBuffer                = 1024 * 5
+	defaultPath                  = "/tmp"
 )
 
 func init() {
@@ -104,51 +111,80 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.C = make(chan *Msg, srv.config.Buffer)
 	}
 
-	var awsOpt session.Options
-	if srv.config.Profile != "" {
-		awsOpt = session.Options{
-			Profile: srv.config.Profile,
-			Config: aws.Config{
-				Region: &srv.config.Region,
-			},
-		}
-	} else {
-		awsOpt = session.Options{
-			Config: aws.Config{
-				Region: &srv.config.Region,
-			},
-		}
+	awsOpt := session.Options{
+		Profile: srv.config.Profile,
+		Config: aws.Config{
+			Region: &srv.config.Region,
+		},
 	}
+
 	if sess, err := session.NewSessionWithOptions(awsOpt); err == nil {
 		srv.s3sess = sess
 	} else {
-		log.Printf("ERROR: invalid S3 session: %s", err)
+		log.Printf("FS ERROR: invalid S3 session: %s", err)
 		srv.s3sess = nil
 	}
 
-	lw := len(srv.writers)
+	monadCfg := &monad.Config{
+		Min:            1,
+		Max:            uint64(srv.config.MaxConnections),
+		Interval:       defaultInterval,
+		CoolDownPeriod: defaultWriterCooldown,
+		WarmFn: func() bool {
+			if srv.desired == 0 {
+				return true
+			}
 
-	if lw == srv.config.MaxConnections {
-		log.Printf("FS: concurrent writers %d", lw)
-		return nil
+			l := float64(len(srv.C))
+			if l == 0 {
+				return false
+			}
+
+			currPtc := (l / float64(cap(srv.C))) * 100
+
+			lib.Debugf("FS: colddown Queue %d/%d (%.0f%%/%.0f%%), Workers %d/%d",
+				len(srv.C), cap(srv.C), currPtc, defaultWriterThresholdWarmUp, srv.desired, srv.config.MaxConnections)
+
+			if currPtc > defaultWriterThresholdWarmUp {
+				return true
+			}
+			return false
+		},
+		DesireFn: func(n uint64) {
+			srv.desired = int(n)
+			lw := len(srv.writers)
+
+			if lw == srv.desired {
+				log.Printf("FS: concurrent writers %d", lw)
+				return
+			}
+
+			defer func() {
+				lib.Debugf("FS %s clients %d/%d, in the queue %d/%d", srv.config.Listen, len(srv.writers), srv.config.MaxConnections, len(srv.C), cap(srv.C))
+			}()
+
+			if lw > srv.desired {
+				for i := srv.desired; i < lw; i++ {
+					w := <-srv.writers
+					// exit without blocking
+					go w.exit()
+				}
+				return
+			}
+
+			if lw < srv.desired {
+				for i := lw; i < srv.desired; i++ {
+					srv.writers <- newWriter(srv)
+				}
+				return
+			}
+		},
 	}
 
-	if lw > srv.config.MaxConnections {
-		for i := srv.config.MaxConnections; i < lw; i++ {
-			w := <-srv.writers
-			// exit without block
-			go w.exit()
-		}
-		log.Printf("FS: colddown concurrent writers %d", srv.config.MaxConnections)
-		return nil
-	}
-
-	if lw < srv.config.MaxConnections {
-		for i := lw; i < srv.config.MaxConnections; i++ {
-			srv.writers <- newWriter(srv)
-		}
-		log.Printf("FS: warmup concurrent writers %d", len(srv.writers))
-		return nil
+	if srv.monad == nil {
+		srv.monad = monad.New(monadCfg)
+	} else {
+		go srv.monad.Reload(monadCfg)
 	}
 
 	return nil
@@ -172,14 +208,14 @@ func (srv *Server) Start() (e error) {
 			if e != nil {
 				if netErr, ok := e.(net.Error); ok && netErr.Timeout() {
 					// Paranoid, ignore timeout errors
-					log.Println("File ERROR: timeout at local listener", srv.config.ListenHost(), e)
+					log.Println("FS ERROR: timeout at local listener", srv.config.ListenHost(), e)
 					continue
 				}
 				if srv.exiting {
-					log.Println("File: exiting local listener", srv.config.ListenHost())
+					log.Println("FS: exiting local listener", srv.config.ListenHost())
 					return
 				}
-				log.Fatalln("File ERROR: emergency error in local listener", srv.config.ListenHost(), e)
+				log.Fatalln("FS ERROR: emergency error in local listener", srv.config.ListenHost(), e)
 				return
 			}
 			go srv.handleConnection(netConn)
@@ -223,7 +259,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if r.IsType(redis.IOErr) {
 			if redis.IsTimeout(r) {
 				// Paranoid, don't close it just log it
-				log.Println("File: Local client listen timeout at", srv.config.Listen)
+				log.Println("FS ERROR: Local client listen timeout at", srv.config.Listen)
 				continue
 			}
 			// Connection was closed
@@ -255,6 +291,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if err := srv.set(netCon, req.Items); err != nil {
 				switch err {
 				case errChanFull:
+					log.Printf("FS ERROR SET: channel full %d", len(srv.C))
 					respChanFull.WriteTo(netCon)
 				default:
 					log.Printf("FS ERROR SET: %s", err)
@@ -278,7 +315,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				}
 			}
 		default:
-			log.Panicf("Invalid command: This never should happen, check the cases or the list of valid command")
+			log.Panicf("FS ERROR: Invalid command: This never should happen, check the cases or the list of valid command")
 
 		}
 

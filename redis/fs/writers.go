@@ -40,6 +40,7 @@ func (w *writer) listen() {
 			if err := w.writeTo(m); err == nil {
 				putMsg(m)
 			} else {
+				log.Printf("FS ERROR Writer: %s", err)
 				// send message back to the channel
 				time.Sleep(retryWriter)
 				w.srv.C <- m

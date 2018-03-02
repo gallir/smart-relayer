@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"io"
+	"io/ioutil"
 	"log"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -63,9 +65,8 @@ func (r *ReaderUncompress) Get(key, path string, t time.Time) ([]byte, error) {
 				continue
 			}
 
-			lib.Debugf("S3 Bucket: %s: %s", t.UTC(), *obj.Key)
-
 			if t.UTC().Minute() >= int(from) && t.UTC().Minute() <= int(to) {
+				lib.Debugf("S3 Bucket: %s: %s", t.UTC(), *obj.Key)
 				if r, err := r.download(key, obj.Key); err == nil {
 					response = r
 					return true
@@ -84,7 +85,12 @@ func (r *ReaderUncompress) Get(key, path string, t time.Time) ([]byte, error) {
 
 func (r *ReaderUncompress) download(key string, objKey *string) ([]byte, error) {
 
-	buff := &aws.WriteAtBuffer{}
+	buff, errTmp := ioutil.TempFile(os.TempDir(), "fslog-")
+	if errTmp != nil {
+		log.Printf("FS tempFile error: %s", errTmp)
+		return nil, errTmp
+	}
+	defer os.Remove(buff.Name())
 
 	downloader := s3manager.NewDownloader(r.sess)
 	_, err := downloader.Download(buff, &s3.GetObjectInput{
@@ -95,7 +101,7 @@ func (r *ReaderUncompress) download(key string, objKey *string) ([]byte, error) 
 		return nil, err
 	}
 
-	t := tar.NewReader(bytes.NewReader(buff.Bytes()))
+	t := tar.NewReader(buff)
 	for {
 		h, err := t.Next()
 		switch {
