@@ -53,6 +53,7 @@ type Msg struct {
 	t       time.Time
 	b       *bytebufferpool.ByteBuffer
 	srv     *Server
+	shard   uint32
 }
 
 func (m *Msg) fullpath() string {

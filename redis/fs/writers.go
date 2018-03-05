@@ -11,6 +11,7 @@ import (
 )
 
 const (
+	timeOutWrite       = 5 * time.Second
 	retryWriter        = 2 * time.Second
 	minSizeForCompress = 512
 )
@@ -74,6 +75,9 @@ func (w *writer) writeTo(m *Msg) error {
 		return err
 	}
 	defer newFile.Close()
+
+	// After the time defined in timeOutWrite the write operation will return an error
+	newFile.SetDeadline(time.Now().Add(timeOutWrite))
 
 	// Use the compression if is active in the configuration and the message
 	// is bigger than 512 bytes (minSizeForCompress)

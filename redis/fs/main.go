@@ -63,7 +63,7 @@ var (
 	defaultMaxWriters            = 1000
 	defaultInterval              = 500 * time.Millisecond
 	defaultWriterCooldown        = 15 * time.Second
-	defaultWriterThresholdWarmUp = 40.0 // percent
+	defaultWriterThresholdWarmUp = 30.0 // percent
 	defaultBuffer                = 1024 * 5
 	defaultPath                  = "/tmp"
 )
@@ -160,7 +160,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 			}
 
 			defer func() {
-				lib.Debugf("FS %s clients %d/%d, in the queue %d/%d", srv.config.Listen, len(srv.writers), srv.config.MaxConnections, len(srv.C), cap(srv.C))
+				log.Printf("FS %s clients %d/%d, in the queue %d/%d", srv.config.Listen, len(srv.writers), srv.config.MaxConnections, len(srv.C), cap(srv.C))
 			}()
 
 			if lw > srv.desired {
@@ -373,6 +373,18 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	}
 
 	r := fmt.Sprintf("%s/%s", msg.fullpath(), msg.filename())
+
+	if srv.config.Mode == "sync" {
+		defer putMsg(msg)
+
+		w := &writer{srv: srv}
+		if err := w.writeTo(msg); err != nil {
+			redis.NewResp(err).WriteTo(netCon)
+			return err
+		}
+		redis.NewResp(r).WriteTo(netCon)
+		return nil
+	}
 
 	select {
 	case srv.C <- msg:
