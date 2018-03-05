@@ -35,6 +35,7 @@ type reqData struct {
 
 const (
 	selectCommand = "SELECT"
+	evalCommand   = "EVAL"
 )
 
 // errors

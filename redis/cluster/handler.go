@@ -77,20 +77,25 @@ func (h *connHandler) process(req *redis.Resp) {
 		return
 	}
 
+	comp := h.srv.config.Compress
+	if cmd == evalCommand {
+		comp = false
+	}
+
 	p := atomic.LoadInt32(&h.pending)
 	if p != 0 {
 		// There are operations in queue, send by the same channel
 		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
 			req:        req,
-			compress:   h.srv.config.Compress,
+			compress:   comp,
 			mustAnswer: true,
 		}
 		return
 	}
 
 	// No ongoing operations, we can send directly
-	h.sender(true, req, h.srv.config.Compress, false)
+	h.sender(true, req, comp, false)
 }
 
 func (h *connHandler) sendWorker() {
