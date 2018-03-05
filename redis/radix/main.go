@@ -29,6 +29,7 @@ const (
 	connectTimeout    = 5 * time.Second
 	maxIdle           = 120 * time.Second
 	selectCommand     = "SELECT"
+	evalCommand       = "EVAL"
 )
 
 var (

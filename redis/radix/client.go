@@ -236,7 +236,8 @@ func (clt *Client) write(r *lib.Request) (int64, error) {
 	}
 
 	resp := r.Resp
-	if clt.config.Compress {
+	// Use compression just if is not an EVAL command
+	if clt.config.Compress && r.Command != evalCommand {
 		resp.Compress(lib.MinCompressSize, lib.MagicSnappy)
 	}
 
