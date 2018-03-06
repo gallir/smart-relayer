@@ -51,14 +51,21 @@ func (h *connHandler) close() {
 
 func (h *connHandler) process(req *redis.Resp) {
 	cmd, err := req.First()
-	if err != nil || strings.ToUpper(cmd) == selectCommand {
+	if err != nil {
 		respBadCommand.WriteTo(h.conn)
+		return
+	}
+
+	cmd = strings.ToUpper(cmd)
+	if cmd == selectCommand {
+		respBadCommand.WriteTo(h.conn)
+		return
 	}
 
 	doAsync := false
 	var fastResponse *redis.Resp
 	if h.srv.mode == lib.ModeSmart {
-		fastResponse, doAsync = commands[strings.ToUpper(cmd)]
+		fastResponse, doAsync = commands[cmd]
 	}
 
 	if doAsync {
@@ -71,15 +78,10 @@ func (h *connHandler) process(req *redis.Resp) {
 		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
 			req:        req,
-			compress:   h.srv.config.Compress,
+			compress:   h.srv.config.Compress && cmd != evalCommand,
 			mustAnswer: false,
 		}
 		return
-	}
-
-	comp := h.srv.config.Compress
-	if cmd == evalCommand {
-		comp = false
 	}
 
 	p := atomic.LoadInt32(&h.pending)
@@ -88,14 +90,14 @@ func (h *connHandler) process(req *redis.Resp) {
 		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
 			req:        req,
-			compress:   comp,
+			compress:   h.srv.config.Compress && cmd != evalCommand,
 			mustAnswer: true,
 		}
 		return
 	}
 
 	// No ongoing operations, we can send directly
-	h.sender(true, req, comp, false)
+	h.sender(true, req, h.srv.config.Compress && cmd != evalCommand, false)
 }
 
 func (h *connHandler) sendWorker() {
