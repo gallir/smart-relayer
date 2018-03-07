@@ -16,6 +16,10 @@ const (
 	minSizeForCompress = 512
 )
 
+var (
+	dirCache = NewDirCache()
+)
+
 type writer struct {
 	srv  *Server
 	done chan bool
@@ -54,7 +58,7 @@ func (w *writer) listen() {
 
 func (w *writer) writeTo(m *Msg) error {
 	dirName := m.fullpath()
-	if err := os.MkdirAll(dirName, os.ModePerm); err != nil {
+	if err := dirCache.makeAll(dirName); err != nil {
 		log.Printf("File ERROR: %s", err)
 		return err
 	}

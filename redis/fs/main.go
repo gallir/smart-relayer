@@ -3,6 +3,7 @@ package fs
 import (
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"log"
 	"net"
 	"os"
@@ -49,6 +50,7 @@ var (
 	errGet         = errors.New("ERR - syntax: GET project key [timestamp]")
 	errChanFull    = errors.New("ERR - The file can't be created")
 	errNotFound    = errors.New("KO - Key not found")
+	errClosing     = errors.New("ERR - Daemon closing")
 	respOK         = redis.NewRespSimple("OK")
 	respTrue       = redis.NewResp(1)
 	respBadCommand = redis.NewResp(errBadCmd)
@@ -57,15 +59,17 @@ var (
 	respBadGet     = redis.NewResp(errGet)
 	respChanFull   = redis.NewResp(errChanFull)
 	respNotFound   = redis.NewResp(errNotFound)
+	respClosing    = redis.NewResp(errClosing)
 	commands       map[string]*redis.Resp
 
-	defaultMinWriters            = 5
-	defaultMaxWriters            = 1000
-	defaultInterval              = 500 * time.Millisecond
-	defaultWriterCooldown        = 15 * time.Second
-	defaultWriterThresholdWarmUp = 30.0 // percent
-	defaultBuffer                = 1024 * 5
-	defaultPath                  = "/tmp"
+	defaultHashSize              uint32 = 2
+	defaultMinWriters                   = 5
+	defaultMaxWriters                   = 1000
+	defaultInterval                     = 500 * time.Millisecond
+	defaultWriterCooldown               = 15 * time.Second
+	defaultWriterThresholdWarmUp        = 30.0 // percent
+	defaultBuffer                       = 1024 * 10
+	defaultPath                         = "/tmp"
 )
 
 func init() {
@@ -111,6 +115,11 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.C = make(chan *Msg, srv.config.Buffer)
 	}
 
+	if cap(srv.C) < srv.config.Buffer {
+		log.Printf("FS WARNING: the new buffer size %d is bigger than the real capacity of the channel %d", srv.config.Buffer, cap(srv.C))
+		srv.config.Buffer = cap(srv.C)
+	}
+
 	awsOpt := session.Options{
 		Profile: srv.config.Profile,
 		Config: aws.Config{
@@ -126,7 +135,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	}
 
 	monadCfg := &monad.Config{
-		Min:            1,
+		Min:            uint64(defaultMinWriters),
 		Max:            uint64(srv.config.MaxConnections),
 		Interval:       defaultInterval,
 		CoolDownPeriod: defaultWriterCooldown,
@@ -135,12 +144,16 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 				return true
 			}
 
+			if srv.desired < defaultMinWriters {
+				return true
+			}
+
 			l := float64(len(srv.C))
 			if l == 0 {
 				return false
 			}
 
-			currPtc := (l / float64(cap(srv.C))) * 100
+			currPtc := (l / float64(srv.config.Buffer)) * 100
 
 			lib.Debugf("FS: colddown Queue %d/%d (%.0f%%/%.0f%%), Workers %d/%d",
 				len(srv.C), cap(srv.C), currPtc, defaultWriterThresholdWarmUp, srv.desired, srv.config.MaxConnections)
@@ -160,7 +173,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 			}
 
 			defer func() {
-				log.Printf("FS %s clients %d/%d, in the queue %d/%d", srv.config.Listen, len(srv.writers), srv.config.MaxConnections, len(srv.C), cap(srv.C))
+				log.Printf("FS %s clients %d/%d, in the queue %d/%d", srv.config.Listen, len(srv.writers), srv.config.MaxConnections, len(srv.C), srv.config.Buffer)
 			}()
 
 			if lw > srv.desired {
@@ -322,16 +335,17 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	}
 }
 
-func (srv *Server) fullpath(project string, t time.Time) string {
-	return fmt.Sprintf("%s/%s", srv.config.Path, srv.path(project, t))
+func (srv *Server) fullpath(m *Msg) string {
+	return fmt.Sprintf("%s/%s", srv.config.Path, srv.path(m))
 }
 
-func (srv *Server) path(project string, t time.Time) string {
-	return fmt.Sprintf("%s/%.2d", srv.hourpath(project, t), t.UTC().Minute())
+func (srv *Server) path(m *Msg) string {
+	h := crc32.ChecksumIEEE([]byte(m.k)) % defaultHashSize
+	return fmt.Sprintf("%s/%.2d/%02x", srv.hourpath(m), m.t.UTC().Minute(), h)
 }
 
-func (srv *Server) hourpath(project string, t time.Time) string {
-	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d", project, t.UTC().Year(), t.UTC().Month(), t.UTC().Day(), t.UTC().Hour())
+func (srv *Server) hourpath(m *Msg) string {
+	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d", m.project, m.t.UTC().Year(), m.t.UTC().Month(), m.t.UTC().Day(), m.t.UTC().Hour())
 }
 
 func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
@@ -339,26 +353,30 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	// Get a message struct from the pool
 	msg := getMsg(srv)
 
+	// Find the project name
 	msg.project, err = items[1].Str()
 	if err != nil {
 		return err
 	}
 
+	// Find the key name of the message
 	msg.k, err = items[2].Str()
 	if err != nil {
 		return err
 	}
 
 	if len(items) == 4 {
+		// If have 4 items means that the client sent the content without timestamp
+		// in this case the message will have the current timestamp
 		if b, err := items[3].Bytes(); err == nil {
 			msg.b.Write(b)
 		} else {
 			return err
 		}
-
-		// Current time
+		// Define the current timestamp
 		msg.t = time.Now()
 	} else {
+		// If have more than 4 items we read timestamp
 		if i, err := items[3].Int64(); err == nil {
 			msg.t = time.Unix(i, 0)
 		} else {
@@ -374,6 +392,8 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 
 	r := fmt.Sprintf("%s/%s", msg.fullpath(), msg.filename())
 
+	// If the server is configured in sync mode we will try to write
+	// the file directly and respons to the client with the result
 	if srv.config.Mode == "sync" {
 		defer putMsg(msg)
 
@@ -386,30 +406,44 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 		return nil
 	}
 
+	// When the process have to close the chan srv.C can be closed
+	// before arrive to this part of the code. For this reason we
+	// check if the server is closing and respond an error message
+	// to avoild a race condition trying to send a message to closed
+	// channel
+	if srv.exiting {
+		respClosing.WriteTo(netCon)
+		return nil
+	}
+
+	// Try to send the message to the chan srv.C if is full we response
+	// with the chan full message
 	select {
 	case srv.C <- msg:
 		redis.NewResp(r).WriteTo(netCon)
 		return nil
 	default:
+		return errChanFull
 	}
-
-	return errChanFull
 }
 
 func (srv *Server) get(netCon net.Conn, items []*redis.Resp) (err error) {
 	msg := getMsg(srv)
 	defer putMsg(msg)
 
+	// Find the project name
 	msg.project, err = items[1].Str()
 	if err != nil {
 		return err
 	}
 
+	// Find the key name
 	msg.k, err = items[2].Str()
 	if err != nil {
 		return err
 	}
 
+	// Verify if the 3th item is a int64 value to be converted in time
 	if len(items) > 3 {
 		if i, err := items[3].Int64(); err == nil {
 			msg.t = time.Unix(i, 0)

@@ -57,18 +57,15 @@ type Msg struct {
 }
 
 func (m *Msg) fullpath() string {
-	t := m.t
-	return m.srv.fullpath(m.project, t)
+	return m.srv.fullpath(m)
 }
 
 func (m *Msg) path() string {
-	t := m.t
-	return m.srv.path(m.project, t)
+	return m.srv.path(m)
 }
 
 func (m *Msg) hourpath() string {
-	t := m.t
-	return m.srv.hourpath(m.project, t)
+	return m.srv.hourpath(m)
 }
 
 func (m *Msg) filename() string {
