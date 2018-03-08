@@ -203,8 +203,8 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		go srv.monad.Reload(monadCfg)
 	}
 
-	log.Printf("FS %s config Writers %d/%d Buffer %d Shard %d",
-		srv.config.Listen, defaultMinWriters, srv.config.MaxConnections, srv.config.Buffer, srv.shards)
+	log.Printf("FS %s config Writers %d/%d Buffer %d/%d Shard %d",
+		srv.config.Listen, defaultMinWriters, srv.config.MaxConnections, len(srv.C), srv.config.Buffer, srv.shards)
 
 	return nil
 }
