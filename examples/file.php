@@ -26,9 +26,10 @@ for ($c = 1; $c<=$limit; $c++) {
     switch ($method) {
         default:
             // SET
+            $t = time();
             $value = json_encode(array("a"=>"text to check", "rand"=>randString(rand(100*1024,200*1024))));
-            $key = time()."-".sha1($value);
-            $response = phpiredis_command_bs($cli, array("SET", "testing", $key, time(), $value));
+            $key = $t."-".sha1($value);
+            $response = phpiredis_command_bs($cli, array("SET", "testing", $key, $t, $value));
             printf("R: %s\n", $response);
             if (substr($response, 0, 3) == "ERR") {
                 printf("Error in SET %s\n", $response);
