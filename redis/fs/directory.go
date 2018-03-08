@@ -35,7 +35,7 @@ func NewDirCache() *MkDirCache {
 
 func (d *MkDirCache) clean() {
 	for {
-		// Wait for the next check
+		// Wait for the next interval
 		time.Sleep(defaultCleanInterval)
 
 		// deadLine is the limit timestamp to keep a directory in the cache
@@ -45,9 +45,8 @@ func (d *MkDirCache) clean() {
 		d.m.Range(func(key, val interface{}) bool {
 			if val.(int64) < deadLine {
 				// If the record is older than the deadLine delete it
-				s := key.(string)
-				d.m.Delete(s)
-				lib.Debugf("FS MkDirCache delete: %s", s)
+				d.m.Delete(key)
+				lib.Debugf("FS MkDirCache delete: %s", key.(string))
 			}
 			return true
 		})

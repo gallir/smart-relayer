@@ -27,6 +27,7 @@ type Server struct {
 	reseting bool
 	listener net.Listener
 	C        chan *Msg
+	shard    uint32
 
 	desired int
 	writers chan *writer
@@ -62,14 +63,14 @@ var (
 	respClosing    = redis.NewResp(errClosing)
 	commands       map[string]*redis.Resp
 
-	defaultHashSize              uint32 = 2
-	defaultMinWriters                   = 5
-	defaultMaxWriters                   = 1000
-	defaultInterval                     = 500 * time.Millisecond
-	defaultWriterCooldown               = 15 * time.Second
-	defaultWriterThresholdWarmUp        = 30.0 // percent
-	defaultBuffer                       = 1024 * 10
-	defaultPath                         = "/tmp"
+	defaultShard                 = 64
+	defaultMinWriters            = 2
+	defaultMaxWriters            = 256
+	defaultInterval              = 500 * time.Millisecond
+	defaultWriterCooldown        = 15 * time.Second
+	defaultWriterThresholdWarmUp = 50.0 // percent
+	defaultBuffer                = 20000
+	defaultPath                  = "/tmp"
 )
 
 func init() {
@@ -110,6 +111,11 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	if srv.config.Path == "" {
 		srv.config.Path = defaultPath
 	}
+
+	if srv.config.Shard == 0 {
+		srv.config.Shard = defaultShard
+	}
+	srv.shard = uint32(srv.config.Shard)
 
 	if srv.C == nil {
 		srv.C = make(chan *Msg, srv.config.Buffer)
@@ -199,6 +205,9 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	} else {
 		go srv.monad.Reload(monadCfg)
 	}
+
+	log.Printf("FS %s config Writers %d/%d Buffer %d Shard %d",
+		srv.config.Listen, defaultMinWriters, srv.config.MaxConnections, srv.config.Buffer, srv.shard)
 
 	return nil
 }
@@ -339,11 +348,15 @@ func (srv *Server) fullpath(m *Msg) string {
 	return fmt.Sprintf("%s/%s", srv.config.Path, srv.path(m))
 }
 
+// path resolve the full path to read/write the file
+// Here we resolve the shard based in the "key" (m.k) of the message
+// based on crc32 algoritm and expresed as hexdecimal
 func (srv *Server) path(m *Msg) string {
-	h := crc32.ChecksumIEEE([]byte(m.k)) % defaultHashSize
+	h := crc32.ChecksumIEEE([]byte(m.k)) % srv.shard
 	return fmt.Sprintf("%s/%.2d/%02x", srv.hourpath(m), m.t.UTC().Minute(), h)
 }
 
+// hourpath return the full path as string until the "hour"
 func (srv *Server) hourpath(m *Msg) string {
 	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d", m.project, m.t.UTC().Year(), m.t.UTC().Month(), m.t.UTC().Day(), m.t.UTC().Hour())
 }
