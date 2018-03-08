@@ -3,7 +3,6 @@ package fs
 import (
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"log"
 	"net"
 	"os"
@@ -264,33 +263,6 @@ func (srv *Server) Exit() {
 
 	// finishing the server
 	srv.done <- true
-}
-
-//
-// The next lines have the functions to build the
-// path and hourpath (relative) and the fullpath (absolute to filesystem)
-//
-
-// fullpath return the full path from the / directory in the minute of the file
-func (srv *Server) fullpath(m *Msg) string {
-	return fmt.Sprintf("%s/%s", srv.config.Path, srv.path(m))
-}
-
-// path resolve the full path to read/write the file
-// Here we resolve the shard based in the "key" (m.k) of the message
-// based on crc32 algoritm and expresed as hexdecimal
-func (srv *Server) path(m *Msg) string {
-	if srv.shards == 0 {
-		// If shard is disabled
-		return fmt.Sprintf("%s/%.2d", srv.hourpath(m), m.t.UTC().Minute())
-	}
-	h := crc32.ChecksumIEEE([]byte(m.k)) % srv.shards
-	return fmt.Sprintf("%s/%.2d/%02x", srv.hourpath(m), m.t.UTC().Minute(), h)
-}
-
-// hourpath return the full path as string until the "hour"
-func (srv *Server) hourpath(m *Msg) string {
-	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d", m.project, m.t.UTC().Year(), m.t.UTC().Month(), m.t.UTC().Day(), m.t.UTC().Hour())
 }
 
 func (srv *Server) handleConnection(netCon net.Conn) {

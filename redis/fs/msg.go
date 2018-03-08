@@ -2,6 +2,7 @@ package fs
 
 import (
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/ioutil"
 	"os"
@@ -48,24 +49,39 @@ func putMsg(m *Msg) {
 }
 
 type Msg struct {
-	project string
-	k       string
-	t       time.Time
-	b       *bytebufferpool.ByteBuffer
-	srv     *Server
-	shard   uint32
+	project       string
+	k             string
+	t             time.Time
+	b             *bytebufferpool.ByteBuffer
+	srv           *Server
+	disableShards bool
 }
 
+//
+// The next lines have the functions to build the
+// path and hourpath (relative) and the fullpath (absolute to filesystem)
+//
+
+// fullpath return the full path from the / directory in the minute of the file
 func (m *Msg) fullpath() string {
-	return m.srv.fullpath(m)
+	return fmt.Sprintf("%s/%s", m.srv.config.Path, m.path())
 }
 
-func (m *Msg) path() string {
-	return m.srv.path(m)
-}
-
+// hourpath return the full path as string until the "hour"
 func (m *Msg) hourpath() string {
-	return m.srv.hourpath(m)
+	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d", m.project, m.t.UTC().Year(), m.t.UTC().Month(), m.t.UTC().Day(), m.t.UTC().Hour())
+}
+
+// path resolve the full path to read/write the file
+// Here we resolve the shard based in the "key" (m.k) of the message
+// based on crc32 algoritm and expresed as hexdecimal
+func (m *Msg) path() string {
+	if m.srv.shards == 0 || m.disableShards {
+		// If shard is disabled
+		return fmt.Sprintf("%s/%.2d", m.hourpath(), m.t.UTC().Minute())
+	}
+	h := crc32.ChecksumIEEE([]byte(m.k)) % m.srv.shards
+	return fmt.Sprintf("%s/%.2d/%02x", m.hourpath(), m.t.UTC().Minute(), h)
 }
 
 func (m *Msg) filename() string {
@@ -101,6 +117,12 @@ func (m *Msg) Bytes() (b []byte, err error) {
 	b, err = m.bytesFile(fmt.Sprintf("%s/%s", m.fullpath(), m.filenamePlain()), false)
 	if err == nil {
 		return
+	}
+
+	// check if the file exists disabling the shards just for this message
+	if m.srv.shards > 0 && !m.disableShards {
+		m.disableShards = true
+		return m.Bytes()
 	}
 
 	lib.Debugf("FS Read S3: %s/%s - %s", m.path(), m.filenamePlain(), m.t.UTC())
