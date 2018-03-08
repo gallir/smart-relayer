@@ -81,10 +81,13 @@ func (d *MkDirCache) makeAll(key string) error {
 	}
 	d.Unlock()
 
+	// Will store the error returned by os.MkdirAll few lines below
+	var err error
+
 	// https://golang.org/pkg/sync/#Once
 	// Once is an object that will perform exactly one action.
 	mkDirOnce.Do(func() {
-		if err := os.MkdirAll(key, os.ModePerm); err != nil {
+		if err = os.MkdirAll(key, os.ModePerm); err != nil {
 			log.Printf("File ERROR: %s", err)
 			return
 		}

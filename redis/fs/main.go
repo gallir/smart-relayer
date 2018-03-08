@@ -112,10 +112,16 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.config.Path = defaultPath
 	}
 
+	// If Shards is 0 we manage it as undefined so we apply the default value
 	if srv.config.Shards == 0 {
 		srv.config.Shards = defaultShards
 	}
-	srv.shards = uint32(srv.config.Shards)
+	// If the Shards are higher than 0 (could be by default or defined by the config file)
+	// In case the shards are defined with a value less than 0 we will manage it as disabled
+	// definding srv.shards as 0, look in function srv.path
+	if srv.config.Shards > 0 {
+		srv.shards = uint32(srv.config.Shards)
+	}
 
 	if srv.C == nil {
 		srv.C = make(chan *Msg, srv.config.Buffer)
@@ -260,6 +266,33 @@ func (srv *Server) Exit() {
 	srv.done <- true
 }
 
+//
+// The next lines have the functions to build the
+// path and hourpath (relative) and the fullpath (absolute to filesystem)
+//
+
+// fullpath return the full path from the / directory in the minute of the file
+func (srv *Server) fullpath(m *Msg) string {
+	return fmt.Sprintf("%s/%s", srv.config.Path, srv.path(m))
+}
+
+// path resolve the full path to read/write the file
+// Here we resolve the shard based in the "key" (m.k) of the message
+// based on crc32 algoritm and expresed as hexdecimal
+func (srv *Server) path(m *Msg) string {
+	if srv.shards == 0 {
+		// If shard is disabled
+		return fmt.Sprintf("%s/%.2d", srv.hourpath(m), m.t.UTC().Minute())
+	}
+	h := crc32.ChecksumIEEE([]byte(m.k)) % srv.shards
+	return fmt.Sprintf("%s/%.2d/%02x", srv.hourpath(m), m.t.UTC().Minute(), h)
+}
+
+// hourpath return the full path as string until the "hour"
+func (srv *Server) hourpath(m *Msg) string {
+	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d", m.project, m.t.UTC().Year(), m.t.UTC().Month(), m.t.UTC().Day(), m.t.UTC().Hour())
+}
+
 func (srv *Server) handleConnection(netCon net.Conn) {
 
 	defer netCon.Close()
@@ -334,23 +367,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		}
 
 	}
-}
-
-func (srv *Server) fullpath(m *Msg) string {
-	return fmt.Sprintf("%s/%s", srv.config.Path, srv.path(m))
-}
-
-// path resolve the full path to read/write the file
-// Here we resolve the shard based in the "key" (m.k) of the message
-// based on crc32 algoritm and expresed as hexdecimal
-func (srv *Server) path(m *Msg) string {
-	h := crc32.ChecksumIEEE([]byte(m.k)) % srv.shards
-	return fmt.Sprintf("%s/%.2d/%02x", srv.hourpath(m), m.t.UTC().Minute(), h)
-}
-
-// hourpath return the full path as string until the "hour"
-func (srv *Server) hourpath(m *Msg) string {
-	return fmt.Sprintf("%s/%d/%.2d/%.2d/%.2d", m.project, m.t.UTC().Year(), m.t.UTC().Month(), m.t.UTC().Day(), m.t.UTC().Hour())
 }
 
 func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
