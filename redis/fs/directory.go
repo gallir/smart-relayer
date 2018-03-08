@@ -38,13 +38,13 @@ func (d *MkDirCache) clean() {
 		// Wait for the next interval
 		time.Sleep(defaultCleanInterval)
 
-		// deadLine is the limit timestamp to keep a directory in the cache
-		deadLine := time.Now().Add(defaultDirTTL).Unix()
+		// expires is the limit timestamp to keep a directory in the cache
+		expires := time.Now().Add(defaultDirTTL).Unix()
 
-		// Read all the values in the map and check if are older than the deadLine of the prev line
+		// Read all the values in the map and check if they are older than expires
 		d.m.Range(func(key, val interface{}) bool {
-			if val.(int64) < deadLine {
-				// If the record is older than the deadLine delete it
+			if val.(int64) < expires {
+				// If the record is older than the expires delete it
 				d.m.Delete(key)
 				lib.Debugf("FS MkDirCache delete: %s", key.(string))
 			}
@@ -73,13 +73,12 @@ func (d *MkDirCache) makeAll(key string) error {
 	// the first thread create the directory. The following map
 	// store the sync.Once struct using the directory name as key.
 	d.Lock()
-	_, ok := d.creating[key]
+	mkDirOnce, ok := d.creating[key]
 	if !ok {
 		// If the directory is not in the map we add it
-		d.creating[key] = sync.Once{}
+		mkDirOnce = sync.Once{}
+		d.creating[key] = mkDirOnce
 	}
-	// We recover the directory from the map
-	mkDirOnce := d.creating[key]
 	d.Unlock()
 
 	// https://golang.org/pkg/sync/#Once
