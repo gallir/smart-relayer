@@ -46,7 +46,7 @@ type RelayerConfig struct {
 	Path       string // Path were to store the logs
 	S3Bucket   string // S3 Bucket name
 
-	Shard int // Shards for FS plugin
+	Shards int // Shards for FS plugin
 }
 
 func ReadConfig(filename string) (config *Config, err error) {

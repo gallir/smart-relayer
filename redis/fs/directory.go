@@ -46,7 +46,7 @@ func (d *MkDirCache) clean() {
 			if val.(int64) < expires {
 				// If the record is older than the expires delete it
 				d.m.Delete(key)
-				lib.Debugf("FS MkDirCache delete: %s", key.(string))
+				//lib.Debugf("FS MkDirCache delete: %s", key.(string))
 			}
 			return true
 		})

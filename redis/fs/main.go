@@ -27,7 +27,7 @@ type Server struct {
 	reseting bool
 	listener net.Listener
 	C        chan *Msg
-	shard    uint32
+	shards   uint32
 
 	desired int
 	writers chan *writer
@@ -63,7 +63,7 @@ var (
 	respClosing    = redis.NewResp(errClosing)
 	commands       map[string]*redis.Resp
 
-	defaultShard                 = 64
+	defaultShards                = 64
 	defaultMinWriters            = 2
 	defaultMaxWriters            = 256
 	defaultInterval              = 500 * time.Millisecond
@@ -112,10 +112,10 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.config.Path = defaultPath
 	}
 
-	if srv.config.Shard == 0 {
-		srv.config.Shard = defaultShard
+	if srv.config.Shards == 0 {
+		srv.config.Shards = defaultShards
 	}
-	srv.shard = uint32(srv.config.Shard)
+	srv.shards = uint32(srv.config.Shards)
 
 	if srv.C == nil {
 		srv.C = make(chan *Msg, srv.config.Buffer)
@@ -146,14 +146,6 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		Interval:       defaultInterval,
 		CoolDownPeriod: defaultWriterCooldown,
 		WarmFn: func() bool {
-			if srv.desired == 0 {
-				return true
-			}
-
-			if srv.desired < defaultMinWriters {
-				return true
-			}
-
 			l := float64(len(srv.C))
 			if l == 0 {
 				return false
@@ -207,7 +199,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	}
 
 	log.Printf("FS %s config Writers %d/%d Buffer %d Shard %d",
-		srv.config.Listen, defaultMinWriters, srv.config.MaxConnections, srv.config.Buffer, srv.shard)
+		srv.config.Listen, defaultMinWriters, srv.config.MaxConnections, srv.config.Buffer, srv.shards)
 
 	return nil
 }
@@ -352,7 +344,7 @@ func (srv *Server) fullpath(m *Msg) string {
 // Here we resolve the shard based in the "key" (m.k) of the message
 // based on crc32 algoritm and expresed as hexdecimal
 func (srv *Server) path(m *Msg) string {
-	h := crc32.ChecksumIEEE([]byte(m.k)) % srv.shard
+	h := crc32.ChecksumIEEE([]byte(m.k)) % srv.shards
 	return fmt.Sprintf("%s/%.2d/%02x", srv.hourpath(m), m.t.UTC().Minute(), h)
 }
 

@@ -32,6 +32,7 @@ func benchmarkConcurrentWriter(cw int, b *testing.B) {
 	srv := &Server{
 		C:       make(chan *Msg, cw),
 		writers: make(chan *writer, 1000),
+		shards:  uint32(16),
 	}
 
 	if tempDir != "" {
@@ -45,7 +46,7 @@ func benchmarkConcurrentWriter(cw int, b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		m := getMsg()
+		m := getMsg(srv)
 		m.k = fmt.Sprintf("test-%d-%d", cw, i)
 		m.b.Write(content)
 
