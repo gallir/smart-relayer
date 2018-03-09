@@ -31,8 +31,8 @@ func benchmarkConcurrentWriter(cw int, b *testing.B) {
 
 	srv := &Server{
 		C:       make(chan *Msg, cw),
-		writers: make(chan *writer, 1000),
-		shards:  uint32(16),
+		writers: make(chan *writer, 1000000),
+		shards:  uint32(defaultShards),
 	}
 
 	if tempDir != "" {
@@ -85,4 +85,24 @@ func BenchmarkConcurrentWriter50(b *testing.B) {
 
 func BenchmarkConcurrentWriter100(b *testing.B) {
 	benchmarkConcurrentWriter(100, b)
+}
+
+func BenchmarkConcurrentWriter150(b *testing.B) {
+	benchmarkConcurrentWriter(150, b)
+}
+
+func BenchmarkConcurrentWriter200(b *testing.B) {
+	benchmarkConcurrentWriter(200, b)
+}
+
+func BenchmarkConcurrentWriter250(b *testing.B) {
+	benchmarkConcurrentWriter(250, b)
+}
+
+func BenchmarkConcurrentWriter300(b *testing.B) {
+	benchmarkConcurrentWriter(300, b)
+}
+
+func BenchmarkConcurrentWriter350(b *testing.B) {
+	benchmarkConcurrentWriter(350, b)
 }
