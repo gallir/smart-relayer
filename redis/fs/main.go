@@ -254,12 +254,19 @@ func (srv *Server) Exit() {
 
 	// Close the channel were we store the active writers
 	close(srv.writers)
-	for w := range srv.writers {
-		w.exit()
-	}
 
-	// Close the main channel, all writers will finish
+	// Close the main channel
 	close(srv.C)
+
+	wg := &sync.WaitGroup{}
+	for w := range srv.writers {
+		wg.Add(1)
+		go func(w *writer, wg *sync.WaitGroup) {
+			defer wg.Done()
+			w.exit()
+		}(w, wg)
+	}
+	wg.Wait()
 
 	// finishing the server
 	srv.done <- true
@@ -390,7 +397,7 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	if srv.config.Mode == "sync" {
 		defer putMsg(msg)
 
-		w := &writer{srv: srv}
+		w := writer{srv: srv}
 		if err := w.writeTo(msg); err != nil {
 			redis.NewResp(err).WriteTo(netCon)
 			return err

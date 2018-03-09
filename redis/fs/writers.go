@@ -42,6 +42,9 @@ func (w *writer) listen() {
 	for {
 		select {
 		case m := <-w.srv.C:
+			if m == nil {
+				continue
+			}
 			if err := w.writeTo(m); err == nil {
 				putMsg(m)
 			} else {
@@ -107,4 +110,12 @@ func (w *writer) writeTo(m *Msg) error {
 
 func (w *writer) exit() {
 	w.done <- true
+
+	if w.srv.exiting {
+		for m := range w.srv.C {
+			if err := w.writeTo(m); err == nil {
+				putMsg(m)
+			}
+		}
+	}
 }
