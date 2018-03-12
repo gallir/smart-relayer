@@ -11,7 +11,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/gabrielperezs/monad"
 
 	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
@@ -25,12 +24,10 @@ type Server struct {
 	exiting  bool
 	reseting bool
 	listener net.Listener
-	C        chan *Msg
-	shards   uint32
 
-	desired int
-	writers chan *writer
-	monad   *monad.Monad
+	shardsWriters int
+	shardServer   *ShardsServer
+	shards        uint32
 
 	lastError time.Time
 	errors    int64
@@ -62,6 +59,7 @@ var (
 	respClosing    = redis.NewResp(errClosing)
 	commands       map[string]*redis.Resp
 
+	defaultWritersByShard        = 16
 	defaultShards                = 64
 	defaultMinWriters            = 2
 	defaultMaxWriters            = 256
@@ -83,9 +81,8 @@ func init() {
 // New creates a new Redis local server
 func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv := &Server{
-		done:    done,
-		errors:  0,
-		writers: make(chan *writer, defaultMaxWriters),
+		done:   done,
+		errors: 0,
 	}
 
 	srv.Reload(&c)
@@ -122,13 +119,13 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.shards = uint32(srv.config.Shards)
 	}
 
-	if srv.C == nil {
-		srv.C = make(chan *Msg, srv.config.Buffer)
-	}
+	srv.shardsWriters = defaultWritersByShard
 
-	if cap(srv.C) < srv.config.Buffer {
-		log.Printf("FS WARNING: the new buffer size %d is bigger than the real capacity of the channel %d", srv.config.Buffer, cap(srv.C))
-		srv.config.Buffer = cap(srv.C)
+	// Shards
+	if srv.shardServer == nil {
+		srv.shardServer = NewShardsServer(srv, srv.config.Shards)
+	} else {
+		srv.shardServer.update(srv.config.Shards)
 	}
 
 	awsOpt := session.Options{
@@ -145,66 +142,8 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.s3sess = nil
 	}
 
-	monadCfg := &monad.Config{
-		Min:            uint64(defaultMinWriters),
-		Max:            uint64(srv.config.MaxConnections),
-		Interval:       defaultInterval,
-		CoolDownPeriod: defaultWriterCooldown,
-		WarmFn: func() bool {
-			l := float64(len(srv.C))
-			if l == 0 {
-				return false
-			}
-
-			currPtc := (l / float64(srv.config.Buffer)) * 100
-
-			lib.Debugf("FS: colddown Queue %d/%d (%.0f%%/%.0f%%), Workers %d/%d",
-				len(srv.C), cap(srv.C), currPtc, defaultWriterThresholdWarmUp, srv.desired, srv.config.MaxConnections)
-
-			if currPtc > defaultWriterThresholdWarmUp {
-				return true
-			}
-			return false
-		},
-		DesireFn: func(n uint64) {
-			srv.desired = int(n)
-			lw := len(srv.writers)
-
-			if lw == srv.desired {
-				log.Printf("FS: concurrent writers %d", lw)
-				return
-			}
-
-			defer func() {
-				log.Printf("FS %s clients %d/%d, in the queue %d/%d", srv.config.Listen, len(srv.writers), srv.config.MaxConnections, len(srv.C), srv.config.Buffer)
-			}()
-
-			if lw > srv.desired {
-				for i := srv.desired; i < lw; i++ {
-					w := <-srv.writers
-					// exit without blocking
-					go w.exit()
-				}
-				return
-			}
-
-			if lw < srv.desired {
-				for i := lw; i < srv.desired; i++ {
-					srv.writers <- newWriter(srv)
-				}
-				return
-			}
-		},
-	}
-
-	if srv.monad == nil {
-		srv.monad = monad.New(monadCfg)
-	} else {
-		go srv.monad.Reload(monadCfg)
-	}
-
-	log.Printf("FS %s config Writers %d/%d Buffer %d/%d Shard %d",
-		srv.config.Listen, defaultMinWriters, srv.config.MaxConnections, len(srv.C), srv.config.Buffer, srv.shards)
+	log.Printf("FS %s config Buffer %d/%d Shard %d Writers by shard %d",
+		srv.config.Listen, srv.shardServer.Len(), srv.config.Buffer, srv.shards, srv.shardsWriters)
 
 	return nil
 }
@@ -252,21 +191,7 @@ func (srv *Server) Exit() {
 		srv.listener.Close()
 	}
 
-	// Close the channel were we store the active writers
-	close(srv.writers)
-
-	// Close the main channel
-	close(srv.C)
-
-	wg := &sync.WaitGroup{}
-	for w := range srv.writers {
-		wg.Add(1)
-		go func(w *writer, wg *sync.WaitGroup) {
-			defer wg.Done()
-			w.exit()
-		}(w, wg)
-	}
-	wg.Wait()
+	srv.shardServer.Exit()
 
 	// finishing the server
 	srv.done <- true
@@ -317,7 +242,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			if err := srv.set(netCon, req.Items); err != nil {
 				switch err {
 				case errChanFull:
-					log.Printf("FS ERROR SET: channel full %d", len(srv.C))
+					log.Printf("FS ERROR SET: channel full")
 					respChanFull.WriteTo(netCon)
 				default:
 					log.Printf("FS ERROR SET: %s", err)
@@ -416,10 +341,15 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 		return nil
 	}
 
-	// Try to send the message to the chan srv.C if is full we response
-	// with the chan full message
+	// Find a shard based on the message
+	ss, err := srv.shardServer.get(msg.shard)
+	if err != nil {
+		return err
+	}
+
+	// Send message to the assigned shard
 	select {
-	case srv.C <- msg:
+	case ss.C <- msg:
 		redis.NewResp(r).WriteTo(netCon)
 		return nil
 	default:

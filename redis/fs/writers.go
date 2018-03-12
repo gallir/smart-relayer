@@ -22,6 +22,7 @@ var (
 
 type writer struct {
 	srv  *Server
+	C    chan *Msg
 	done chan bool
 
 	d        time.Time
@@ -29,9 +30,10 @@ type writer struct {
 	fileName string
 }
 
-func newWriter(srv *Server) *writer {
+func newWriter(srv *Server, C chan *Msg) *writer {
 	w := &writer{
 		srv:  srv,
+		C:    C,
 		done: make(chan bool, 1),
 	}
 	go w.listen()
@@ -41,7 +43,7 @@ func newWriter(srv *Server) *writer {
 func (w *writer) listen() {
 	for {
 		select {
-		case m := <-w.srv.C:
+		case m := <-w.C:
 			if m == nil {
 				continue
 			}
@@ -51,7 +53,7 @@ func (w *writer) listen() {
 				log.Printf("FS ERROR Writer: %s", err)
 				// send message back to the channel
 				time.Sleep(retryWriter)
-				w.srv.C <- m
+				w.C <- m
 			}
 		case <-w.done:
 			return
@@ -112,7 +114,7 @@ func (w *writer) exit() {
 	w.done <- true
 
 	if w.srv.exiting {
-		for m := range w.srv.C {
+		for m := range w.C {
 			if err := w.writeTo(m); err == nil {
 				putMsg(m)
 			}

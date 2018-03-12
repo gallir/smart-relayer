@@ -31,7 +31,7 @@ var (
 func getMsg(srv *Server) *Msg {
 	m := msgPool.Get().(*Msg)
 	m.b = msgBytesPool.Get()
-
+	m.shard = -1
 	m.srv = srv
 	return m
 }
@@ -53,6 +53,7 @@ type Msg struct {
 	k             string
 	t             time.Time
 	b             *bytebufferpool.ByteBuffer
+	shard         int
 	srv           *Server
 	disableShards bool
 }
@@ -80,8 +81,22 @@ func (m *Msg) path() string {
 		// If shard is disabled
 		return fmt.Sprintf("%s/%.2d", m.hourpath(), m.t.UTC().Minute())
 	}
+
+	return fmt.Sprintf("%s/%.2d/%02x", m.hourpath(), m.t.UTC().Minute(), m.getShard())
+}
+
+func (m *Msg) getShard() int {
+	if m.shard >= 0 {
+		return m.shard
+	}
+
+	if m.srv.shards == 0 || m.disableShards {
+		return m.shard
+	}
+
 	h := crc32.ChecksumIEEE([]byte(m.k)) % m.srv.shards
-	return fmt.Sprintf("%s/%.2d/%02x", m.hourpath(), m.t.UTC().Minute(), h)
+	m.shard = int(h)
+	return m.shard
 }
 
 func (m *Msg) filename() string {
