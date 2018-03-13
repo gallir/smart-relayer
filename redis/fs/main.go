@@ -59,10 +59,8 @@ var (
 	respClosing    = redis.NewResp(errClosing)
 	commands       map[string]*redis.Resp
 
-	defaultWritersByShard        = 16
-	defaultShards                = 64
-	defaultMinWriters            = 2
-	defaultMaxWriters            = 256
+	defaultWritersByShard        = 32
+	defaultShards                = 32
 	defaultInterval              = 500 * time.Millisecond
 	defaultWriterCooldown        = 15 * time.Second
 	defaultWriterThresholdWarmUp = 50.0 // percent
@@ -98,10 +96,6 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 	srv.config = *c
 	if srv.config.Buffer == 0 {
 		srv.config.Buffer = defaultBuffer
-	}
-
-	if srv.config.MaxConnections == 0 {
-		srv.config.MaxConnections = defaultMaxWriters
 	}
 
 	if srv.config.Path == "" {
@@ -289,6 +283,7 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	if err != nil {
 		return err
 	}
+	msg.getShard()
 
 	if len(items) == 4 {
 		// If have 4 items means that the client sent the content without timestamp
@@ -372,6 +367,7 @@ func (srv *Server) get(netCon net.Conn, items []*redis.Resp) (err error) {
 	if err != nil {
 		return err
 	}
+	msg.getShard()
 
 	// Verify if the 3th item is a int64 value to be converted in time
 	if len(items) > 3 {

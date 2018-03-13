@@ -33,6 +33,7 @@ func getMsg(srv *Server) *Msg {
 	m.b = msgBytesPool.Get()
 	m.shard = -1
 	m.srv = srv
+	m.disableShards = false
 	return m
 }
 
