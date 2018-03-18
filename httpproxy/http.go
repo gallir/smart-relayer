@@ -11,7 +11,7 @@
 // timeout = 15
 // compress = false
 
-package http
+package httpproxy
 
 import (
 	"log"
