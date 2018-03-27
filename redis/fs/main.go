@@ -2,7 +2,6 @@ package fs
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net"
 	"os"
@@ -25,9 +24,8 @@ type Server struct {
 	reseting bool
 	listener net.Listener
 
-	shardsWriters int
-	shardServer   *ShardsServer
-	shards        uint32
+	shardServer *ShardsServer
+	shards      uint32
 
 	lastError time.Time
 	errors    int64
@@ -59,7 +57,7 @@ var (
 	respClosing    = redis.NewResp(errClosing)
 	commands       map[string]*redis.Resp
 
-	defaultWritersByShard        = 32
+	defaultWritersByShard        = 2
 	defaultShards                = 32
 	defaultInterval              = 500 * time.Millisecond
 	defaultWriterCooldown        = 15 * time.Second
@@ -113,13 +111,16 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.shards = uint32(srv.config.Shards)
 	}
 
-	srv.shardsWriters = defaultWritersByShard
+	// Define the number of workers for EACH shard
+	if srv.config.Writers == 0 {
+		srv.config.Writers = defaultWritersByShard
+	}
 
-	// Shards
+	// Create new shards servers or update the config
 	if srv.shardServer == nil {
-		srv.shardServer = NewShardsServer(srv, srv.config.Shards)
+		srv.shardServer = NewShardsServer(srv)
 	} else {
-		srv.shardServer.update(srv.config.Shards)
+		srv.shardServer.reload()
 	}
 
 	awsOpt := session.Options{
@@ -136,8 +137,8 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.s3sess = nil
 	}
 
-	log.Printf("FS %s config Buffer %d/%d Shard %d Writers by shard %d",
-		srv.config.Listen, srv.shardServer.Len(), srv.config.Buffer, srv.shards, srv.shardsWriters)
+	log.Printf("FS %s config Buffer %d/%d Shards %d/%d (writers), total writers %d",
+		srv.config.Listen, srv.shardServer.Len(), srv.config.Buffer, srv.shards, srv.config.Writers, int(srv.shards)*srv.config.Writers)
 
 	return nil
 }
@@ -272,6 +273,14 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	// Get a message struct from the pool
 	msg := getMsg(srv)
 
+	// Return the message to the pull if the set process
+	// have some error
+	defer func(msg *Msg, err error) {
+		if err != nil {
+			putMsg(msg)
+		}
+	}(msg, err)
+
 	// Find the project name
 	msg.project, err = items[1].Str()
 	if err != nil {
@@ -283,13 +292,14 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	if err != nil {
 		return err
 	}
+	// Calculate the shard for this message
 	msg.getShard()
 
 	if len(items) == 4 {
 		// If have 4 items means that the client sent the content without timestamp
 		// in this case the message will have the current timestamp
 		if b, err := items[3].Bytes(); err == nil {
-			msg.b.Write(b)
+			msg.b.Set(b)
 		} else {
 			return err
 		}
@@ -304,24 +314,23 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 		}
 
 		if b, err := items[4].Bytes(); err == nil {
-			msg.b.Write(b)
+			msg.b.Set(b)
 		} else {
 			return err
 		}
 	}
 
-	r := fmt.Sprintf("%s/%s", msg.fullpath(), msg.filename())
+	r := msg.fullpath() + "/" + msg.filename()
 
 	// If the server is configured in sync mode we will try to write
 	// the file directly and respons to the client with the result
 	if srv.config.Mode == "sync" {
-		defer putMsg(msg)
-
 		w := writer{srv: srv}
 		if err := w.writeTo(msg); err != nil {
 			redis.NewResp(err).WriteTo(netCon)
 			return err
 		}
+		putMsg(msg)
 		redis.NewResp(r).WriteTo(netCon)
 		return nil
 	}

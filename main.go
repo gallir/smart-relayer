@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	version = "8.4.1"
+	version = "8.4.3"
 )
 
 var (
@@ -123,6 +123,7 @@ func startOrReload() bool {
 }
 
 func main() {
+
 	// Force a high number of file descriptoir, if possible
 	var rLimit syscall.Rlimit
 	e := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)

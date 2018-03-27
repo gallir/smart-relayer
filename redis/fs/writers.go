@@ -2,7 +2,6 @@ package fs
 
 import (
 	"compress/gzip"
-	"fmt"
 	"log"
 	"os"
 	"time"
@@ -72,10 +71,10 @@ func (w *writer) writeTo(m *Msg) error {
 	if !w.srv.config.Compress || m.b.Len() <= minSizeForCompress {
 		// Use the file name without .gz extension if the compression is
 		// not active or if the size is smaller than 512 bytes (minSizeForCompress)
-		fileName = fmt.Sprintf("%s/%s", dirName, m.filenamePlain())
+		fileName = dirName + "/" + m.filenamePlain()
 	} else {
 		// Use the extension .gz in the file name if is able to use the compression
-		fileName = fmt.Sprintf("%s/%s", dirName, m.filenameGz())
+		fileName = dirName + "/" + m.filenameGz()
 	}
 
 	newFile, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
@@ -91,7 +90,7 @@ func (w *writer) writeTo(m *Msg) error {
 	// Use the compression if is active in the configuration and the message
 	// is bigger than 512 bytes (minSizeForCompress)
 	if !w.srv.config.Compress || m.b.Len() <= minSizeForCompress {
-		if _, err := m.b.WriteTo(newFile); err != nil {
+		if _, err := newFile.Write(m.b.B); err != nil {
 			log.Printf("File ERROR: writing log: %s", err)
 			return err
 		}
@@ -102,7 +101,7 @@ func (w *writer) writeTo(m *Msg) error {
 	zw, _ := gzip.NewWriterLevel(newFile, lib.GzCompressionLevel)
 	defer zw.Close()
 
-	if _, err := m.b.WriteTo(zw); err != nil {
+	if _, err := zw.Write(m.b.B); err != nil {
 		log.Printf("File ERROR: gzip writing log: %s", err)
 		return err
 	}

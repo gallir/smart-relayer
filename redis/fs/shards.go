@@ -19,11 +19,11 @@ type ShardsServer struct {
 	srv  *Server
 }
 
-func NewShardsServer(srv *Server, shards int) *ShardsServer {
+func NewShardsServer(srv *Server) *ShardsServer {
 	ss := &ShardsServer{
 		srv: srv,
 	}
-	ss.update(shards)
+	ss.reload()
 	return ss
 }
 
@@ -39,21 +39,28 @@ func (ss *ShardsServer) get(n int) (*shard, error) {
 	return ss.pool[n], nil
 }
 
-func (ss *ShardsServer) update(n int) {
+func (ss *ShardsServer) reload() {
 	ss.Lock()
 	defer ss.Unlock()
 
 	l := len(ss.pool)
-	if l == n {
+
+	// Reload to the running shards
+	for _, o := range ss.pool {
+		o.reload()
+	}
+
+	// Don't make changes if the running shards are the same as the config value
+	if l == ss.srv.config.Shards {
 		return
 	}
 
-	if n > l {
-		for i := l; i < n; i++ {
+	if ss.srv.config.Shards > l {
+		for i := l; i < ss.srv.config.Shards; i++ {
 			ss.pool = append(ss.pool, newShard(ss.srv))
 		}
 	} else {
-		for i := n; i > l; i-- {
+		for i := ss.srv.config.Shards; i > l; i-- {
 			o := ss.pool[i]
 			ss.pool = append(ss.pool[:i], ss.pool[i+1:]...)
 			go o.exit()

@@ -1,6 +1,10 @@
 package fs
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/gallir/smart-relayer/lib"
+)
 
 type shard struct {
 	srv *Server
@@ -14,13 +18,17 @@ func newShard(srv *Server) *shard {
 		C:   make(chan *Msg, srv.config.Buffer),
 		w:   make(chan *writer, defaultShardLimitWriters),
 	}
-	s.updateWriters()
+	s.reload()
 	return s
 }
 
-func (s *shard) updateWriters() {
+func (s *shard) reload() {
 	l := len(s.w)
-	n := s.srv.shardsWriters
+	n := s.srv.config.Writers
+
+	defer func() {
+		lib.Debugf("Current writers in the shard %d", len(s.w))
+	}()
 
 	if l == n {
 		return
