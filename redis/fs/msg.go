@@ -1,12 +1,15 @@
 package fs
 
 import (
+	"compress/gzip"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gallir/bytebufferpool"
@@ -31,6 +34,7 @@ var (
 func getMsg(srv *Server) *Msg {
 	m := msgPool.Get().(*Msg)
 	m.b = msgBytesPool.Get()
+	m.gz = false
 	m.shard = -1
 	m.srv = srv
 	m.disableShards = false
@@ -39,8 +43,10 @@ func getMsg(srv *Server) *Msg {
 
 func putMsg(m *Msg) {
 
-	msgBytesPool.Put(m.b)
-	m.b = nil
+	if m.b != nil {
+		msgBytesPool.Put(m.b)
+		m.b = nil
+	}
 
 	m.k = ""
 	m.project = ""
@@ -57,6 +63,62 @@ type Msg struct {
 	shard         int
 	srv           *Server
 	disableShards bool
+	tmp           string
+	gz            bool
+}
+
+func (m *Msg) storeTmp() error {
+	tmp, err := ioutil.TempFile(os.TempDir(), "smart-relayer-fs-")
+	if err != nil {
+		return err
+	}
+	defer tmp.Close()
+
+	// Use the compression if is active in the configuration and the message
+	// is bigger than 512 bytes (minSizeForCompress)
+	if !m.srv.config.Compress || m.b.Len() <= minSizeForCompress {
+		if _, err := tmp.Write(m.b.B); err != nil {
+			log.Printf("File ERROR: writing log: %s", err)
+			return err
+		}
+		return nil
+	}
+
+	m.gz = true
+
+	// If the compression is ON
+	zw, _ := gzip.NewWriterLevel(tmp, lib.GzCompressionLevel)
+	defer zw.Close()
+
+	if _, err := zw.Write(m.b.B); err != nil {
+		log.Printf("File ERROR: gzip writing log: %s", err)
+		return err
+	}
+
+	m.tmp = tmp.Name()
+	tmp.Write(m.b.B)
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	msgBytesPool.Put(m.b)
+	m.b = nil
+
+	return nil
+}
+
+func (m *Msg) sentToShard() error {
+	atomic.AddInt64(&m.srv.running, 1)
+	defer atomic.AddInt64(&m.srv.running, -1)
+
+	ss, err := m.srv.shardServer.get(m.shard)
+	if err != nil {
+		return fmt.Errorf("shardServer: %s", err)
+	}
+
+	// TODO: find another storage in case of failure
+	ss.C <- m
+	return nil
 }
 
 //

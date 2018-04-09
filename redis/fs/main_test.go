@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -44,14 +45,13 @@ func shardsPrivateWriters(shards, cw int, b *testing.B) {
 		shards: uint32(shards),
 	}
 	srv.config.Shards = shards
-	srv.shardsWriters = cw
 
 	if tempDir == "" {
 		tempDir = "/tmp/test"
 	}
 	srv.config.Path = fmt.Sprintf("%s/test-shards-%d", tempDir, shards)
 
-	srv.shardServer = NewShardsServer(srv, shards)
+	srv.shardServer = NewShardsServer(srv)
 
 	for i := 0; i < b.N; i++ {
 		m := getMsg(srv)
@@ -109,7 +109,7 @@ func independentWriters(shards, cw int, b *testing.B) {
 
 	close(C)
 
-	srv.exiting = true
+	atomic.StoreUint32(&srv.exiting, 1)
 	wg := &sync.WaitGroup{}
 	for w := range writers {
 		wg.Add(1)

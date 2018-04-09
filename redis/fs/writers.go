@@ -1,12 +1,12 @@
 package fs
 
 import (
-	"compress/gzip"
+	"io"
 	"log"
 	"os"
+	"runtime"
+	"sync/atomic"
 	"time"
-
-	"github.com/gallir/smart-relayer/lib"
 )
 
 const (
@@ -35,11 +35,16 @@ func newWriter(srv *Server, C chan *Msg) *writer {
 		C:    C,
 		done: make(chan bool, 1),
 	}
+
 	go w.listen()
+
 	return w
 }
 
 func (w *writer) listen() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	for {
 		select {
 		case m := <-w.C:
@@ -68,7 +73,7 @@ func (w *writer) writeTo(m *Msg) error {
 	}
 
 	var fileName string
-	if !w.srv.config.Compress || m.b.Len() <= minSizeForCompress {
+	if !w.srv.config.Compress || !m.gz {
 		// Use the file name without .gz extension if the compression is
 		// not active or if the size is smaller than 512 bytes (minSizeForCompress)
 		fileName = dirName + "/" + m.filenamePlain()
@@ -77,7 +82,14 @@ func (w *writer) writeTo(m *Msg) error {
 		fileName = dirName + "/" + m.filenameGz()
 	}
 
-	newFile, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
+	tmpFile, err := os.Open(m.tmp)
+	if err != nil {
+		log.Printf("File ERROR: %s", err)
+		return err
+	}
+	defer tmpFile.Close()
+
+	newFile, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		log.Printf("File ERROR: %s", err)
 		return err
@@ -85,26 +97,15 @@ func (w *writer) writeTo(m *Msg) error {
 	defer newFile.Close()
 
 	// After the time defined in timeOutWrite the write operation will return an error
-	newFile.SetDeadline(time.Now().Add(timeOutWrite))
+	newFile.SetWriteDeadline(time.Now().Add(timeOutWrite))
 
-	// Use the compression if is active in the configuration and the message
-	// is bigger than 512 bytes (minSizeForCompress)
-	if !w.srv.config.Compress || m.b.Len() <= minSizeForCompress {
-		if _, err := newFile.Write(m.b.B); err != nil {
-			log.Printf("File ERROR: writing log: %s", err)
-			return err
-		}
-		return nil
-	}
-
-	// If the compression is ON
-	zw, _ := gzip.NewWriterLevel(newFile, lib.GzCompressionLevel)
-	defer zw.Close()
-
-	if _, err := zw.Write(m.b.B); err != nil {
-		log.Printf("File ERROR: gzip writing log: %s", err)
+	if _, err := io.Copy(newFile, tmpFile); err != nil {
 		return err
 	}
+
+	time.Sleep(5 * time.Second)
+
+	os.Remove(tmpFile.Name())
 
 	return nil
 }
@@ -112,7 +113,7 @@ func (w *writer) writeTo(m *Msg) error {
 func (w *writer) exit() {
 	w.done <- true
 
-	if w.srv.exiting {
+	if atomic.LoadUint32(&w.srv.exiting) > 0 {
 		for m := range w.C {
 			if err := w.writeTo(m); err == nil {
 				putMsg(m)

@@ -2,10 +2,12 @@ package fs
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -15,15 +17,20 @@ import (
 	"github.com/gallir/smart-relayer/lib"
 )
 
+const (
+	waitingForExit = 2 * time.Second
+)
+
 // Server is the thread that listen for clients' connections
 type Server struct {
 	sync.Mutex
 	config   lib.RelayerConfig
 	done     chan bool
-	exiting  bool
-	reseting bool
+	exiting  uint32
+	failing  uint32
 	listener net.Listener
 
+	running     int64
 	shardServer *ShardsServer
 	shards      uint32
 
@@ -84,6 +91,23 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	srv.Reload(&c)
 
 	return srv, nil
+}
+
+func (srv *Server) exitingOrFailing() bool {
+	if atomic.LoadUint32(&srv.exiting) > 0 {
+		return true
+	}
+
+	if atomic.LoadUint32(&srv.failing) > 0 {
+		return true
+	}
+
+	o := atomic.LoadInt64(&srv.running)
+	if o > int64(srv.config.Shards*srv.config.Writers*2) {
+		return true
+	}
+
+	return false
 }
 
 // Reload the configuration
@@ -164,7 +188,7 @@ func (srv *Server) Start() (e error) {
 					log.Println("FS ERROR: timeout at local listener", srv.config.ListenHost(), e)
 					continue
 				}
-				if srv.exiting {
+				if srv.exitingOrFailing() {
 					log.Println("FS: exiting local listener", srv.config.ListenHost())
 					return
 				}
@@ -180,10 +204,25 @@ func (srv *Server) Start() (e error) {
 
 // Exit closes the listener and send done to main
 func (srv *Server) Exit() {
-	srv.exiting = true
+	atomic.StoreUint32(&srv.exiting, 1)
 
 	if srv.listener != nil {
 		srv.listener.Close()
+	}
+
+	retry := 0
+	for retry < 10 {
+		n := atomic.LoadInt64(&srv.running)
+		if n == 0 {
+			break
+		}
+		log.Printf("FS Waiting that %d process are still running", n)
+		time.Sleep(waitingForExit)
+		retry++
+	}
+
+	if n := atomic.LoadInt64(&srv.running); n > 0 {
+		log.Printf("FS ERROR: %d messages lost", n)
 	}
 
 	srv.shardServer.Exit()
@@ -262,7 +301,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			}
 		default:
 			log.Panicf("FS ERROR: Invalid command: This never should happen, check the cases or the list of valid command")
-
 		}
 
 	}
@@ -270,16 +308,12 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 
+	if srv.exitingOrFailing() {
+		return fmt.Errorf("Can't be processed, the system is exting or failing")
+	}
+
 	// Get a message struct from the pool
 	msg := getMsg(srv)
-
-	// Return the message to the pull if the set process
-	// have some error
-	defer func(msg *Msg, err error) {
-		if err != nil {
-			putMsg(msg)
-		}
-	}(msg, err)
 
 	// Find the project name
 	msg.project, err = items[1].Str()
@@ -325,40 +359,23 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	// If the server is configured in sync mode we will try to write
 	// the file directly and respons to the client with the result
 	if srv.config.Mode == "sync" {
-		w := writer{srv: srv}
-		if err := w.writeTo(msg); err != nil {
-			redis.NewResp(err).WriteTo(netCon)
+		if err := msg.storeTmp(); err != nil {
 			return err
 		}
-		putMsg(msg)
-		redis.NewResp(r).WriteTo(netCon)
-		return nil
 	}
 
-	// When the process have to close the chan srv.C can be closed
-	// before arrive to this part of the code. For this reason we
-	// check if the server is closing and respond an error message
-	// to avoild a race condition trying to send a message to closed
-	// channel
-	if srv.exiting {
-		respClosing.WriteTo(netCon)
-		return nil
+	// Send response to the client
+	redis.NewResp(r).WriteTo(netCon)
+
+	if srv.config.Mode != "sync" {
+		if err := msg.storeTmp(); err != nil {
+			return err
+		}
 	}
 
-	// Find a shard based on the message
-	ss, err := srv.shardServer.get(msg.shard)
-	if err != nil {
-		return err
-	}
+	go msg.sentToShard()
 
-	// Send message to the assigned shard
-	select {
-	case ss.C <- msg:
-		redis.NewResp(r).WriteTo(netCon)
-		return nil
-	default:
-		return errChanFull
-	}
+	return nil
 }
 
 func (srv *Server) get(netCon net.Conn, items []*redis.Resp) (err error) {
