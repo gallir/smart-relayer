@@ -46,8 +46,9 @@ type RelayerConfig struct {
 	Path       string // Path were to store the logs
 	S3Bucket   string // S3 Bucket name
 
-	Shards  int // Shards for FS plugin
-	Writers int // Writers BY shard (each shard will have the number of workers defined here)
+	Shards          int // Shards for FS plugin
+	Writers         int // Writers BY shard (each shard will have the number of workers defined here)
+	BreakMultiplier int // Limit to declare as failing. Total writes plus this value
 }
 
 func ReadConfig(filename string) (config *Config, err error) {

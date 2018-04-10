@@ -84,14 +84,3 @@ func (ss *ShardsServer) Exit() {
 
 	return
 }
-
-func (ss *ShardsServer) Len() int {
-	ss.Lock()
-	defer ss.Unlock()
-
-	l := 0
-	for i := 0; i > len(ss.pool); i++ {
-		l += len(ss.pool[i].C)
-	}
-	return l
-}

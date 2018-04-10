@@ -2,7 +2,6 @@ package fs
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net"
 	"os"
@@ -27,9 +26,9 @@ type Server struct {
 	config   lib.RelayerConfig
 	done     chan bool
 	exiting  uint32
-	failing  uint32
 	listener net.Listener
 
+	breakPoint  int64
 	running     int64
 	shardServer *ShardsServer
 	shards      uint32
@@ -52,7 +51,8 @@ var (
 	errGet         = errors.New("ERR - syntax: GET project key [timestamp]")
 	errChanFull    = errors.New("ERR - The file can't be created")
 	errNotFound    = errors.New("KO - Key not found")
-	errClosing     = errors.New("ERR - Daemon closing")
+	errExiting     = errors.New("ERR - System exiting")
+	errFailing     = errors.New("ERR - System failing")
 	respOK         = redis.NewRespSimple("OK")
 	respTrue       = redis.NewResp(1)
 	respBadCommand = redis.NewResp(errBadCmd)
@@ -61,7 +61,8 @@ var (
 	respBadGet     = redis.NewResp(errGet)
 	respChanFull   = redis.NewResp(errChanFull)
 	respNotFound   = redis.NewResp(errNotFound)
-	respClosing    = redis.NewResp(errClosing)
+	respExiting    = redis.NewResp(errExiting)
+	respFailing    = redis.NewResp(errFailing)
 	commands       map[string]*redis.Resp
 
 	defaultWritersByShard        = 2
@@ -71,6 +72,7 @@ var (
 	defaultWriterThresholdWarmUp = 50.0 // percent
 	defaultBuffer                = 20000
 	defaultPath                  = "/tmp"
+	defaultBreakMultiplier       = 5
 )
 
 func init() {
@@ -93,21 +95,16 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 	return srv, nil
 }
 
-func (srv *Server) exitingOrFailing() bool {
+func (srv *Server) exitingOrFailing() error {
 	if atomic.LoadUint32(&srv.exiting) > 0 {
-		return true
+		return errExiting
 	}
 
-	if atomic.LoadUint32(&srv.failing) > 0 {
-		return true
+	if atomic.LoadInt64(&srv.running) >= srv.breakPoint {
+		return errFailing
 	}
 
-	o := atomic.LoadInt64(&srv.running)
-	if o > int64(srv.config.Shards*srv.config.Writers*2) {
-		return true
-	}
-
-	return false
+	return nil
 }
 
 // Reload the configuration
@@ -140,6 +137,12 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.config.Writers = defaultWritersByShard
 	}
 
+	// Break point to declare as unhealthy
+	if srv.config.BreakMultiplier == 0 {
+		srv.config.BreakMultiplier = defaultBreakMultiplier
+	}
+	srv.breakPoint = int64(srv.config.Shards * srv.config.Writers * srv.config.BreakMultiplier)
+
 	// Create new shards servers or update the config
 	if srv.shardServer == nil {
 		srv.shardServer = NewShardsServer(srv)
@@ -161,8 +164,9 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.s3sess = nil
 	}
 
-	log.Printf("FS %s config Buffer %d/%d Shards %d/%d (writers), total writers %d",
-		srv.config.Listen, srv.shardServer.Len(), srv.config.Buffer, srv.shards, srv.config.Writers, int(srv.shards)*srv.config.Writers)
+	log.Printf("FS %s config Buffer %d Shards %d/%d (writers), total writers %d, running %d/%d",
+		srv.config.Listen, srv.config.Buffer, srv.shards, srv.config.Writers,
+		int(srv.shards)*srv.config.Writers, atomic.LoadInt64(&srv.running), srv.breakPoint)
 
 	return nil
 }
@@ -188,7 +192,7 @@ func (srv *Server) Start() (e error) {
 					log.Println("FS ERROR: timeout at local listener", srv.config.ListenHost(), e)
 					continue
 				}
-				if srv.exitingOrFailing() {
+				if atomic.LoadUint32(&srv.exiting) > 0 {
 					log.Println("FS: exiting local listener", srv.config.ListenHost())
 					return
 				}
@@ -265,6 +269,16 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 		switch req.Command {
 		case "PING":
+			if err := srv.exitingOrFailing(); err != nil {
+				log.Printf("FS ERROR: %s", err)
+				switch err {
+				case errFailing:
+					respFailing.WriteTo(netCon)
+				case errExiting:
+					respExiting.WriteTo(netCon)
+				}
+				continue
+			}
 			fastResponse.WriteTo(netCon)
 		case "SET":
 			// SET project key [timestamp] value
@@ -274,12 +288,13 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			}
 
 			if err := srv.set(netCon, req.Items); err != nil {
+				log.Printf("FS ERROR: %s", err)
 				switch err {
-				case errChanFull:
-					log.Printf("FS ERROR SET: channel full")
-					respChanFull.WriteTo(netCon)
+				case errFailing:
+					respFailing.WriteTo(netCon)
+				case errExiting:
+					respExiting.WriteTo(netCon)
 				default:
-					log.Printf("FS ERROR SET: %s", err)
 					redis.NewResp(err).WriteTo(netCon)
 				}
 			}
@@ -308,8 +323,8 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 
-	if srv.exitingOrFailing() {
-		return fmt.Errorf("Can't be processed, the system is exting or failing")
+	if err := srv.exitingOrFailing(); err != nil {
+		return err
 	}
 
 	// Get a message struct from the pool

@@ -22,7 +22,7 @@ var (
 type writer struct {
 	srv  *Server
 	C    chan *Msg
-	done chan bool
+	done chan struct{}
 
 	d        time.Time
 	dirName  string
@@ -33,7 +33,7 @@ func newWriter(srv *Server, C chan *Msg) *writer {
 	w := &writer{
 		srv:  srv,
 		C:    C,
-		done: make(chan bool, 1),
+		done: make(chan struct{}, 1),
 	}
 
 	go w.listen()
@@ -111,7 +111,7 @@ func (w *writer) writeTo(m *Msg) error {
 }
 
 func (w *writer) exit() {
-	w.done <- true
+	w.done <- struct{}{}
 
 	if atomic.LoadUint32(&w.srv.exiting) > 0 {
 		for m := range w.C {
