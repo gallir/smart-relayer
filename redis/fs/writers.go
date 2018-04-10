@@ -68,7 +68,7 @@ func (w *writer) listen() {
 func (w *writer) writeTo(m *Msg) error {
 	dirName := m.fullpath()
 	if err := dirCache.makeAll(dirName); err != nil {
-		log.Printf("File ERROR: %s", err)
+		log.Printf("File ERROR mkdir: %s", err)
 		return err
 	}
 
@@ -84,14 +84,14 @@ func (w *writer) writeTo(m *Msg) error {
 
 	tmpFile, err := os.Open(m.tmp)
 	if err != nil {
-		log.Printf("File ERROR: %s", err)
+		log.Printf("File ERROR tmp: %s", err)
 		return err
 	}
 	defer tmpFile.Close()
 
 	newFile, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
-		log.Printf("File ERROR: %s", err)
+		log.Printf("File ERROR dst: %s", err)
 		return err
 	}
 	defer newFile.Close()
@@ -100,12 +100,14 @@ func (w *writer) writeTo(m *Msg) error {
 	newFile.SetWriteDeadline(time.Now().Add(timeOutWrite))
 
 	if _, err := io.Copy(newFile, tmpFile); err != nil {
+		log.Printf("File ERROR copy: %s", err)
 		return err
 	}
 
-	time.Sleep(5 * time.Second)
-
-	os.Remove(tmpFile.Name())
+	if err := os.Remove(tmpFile.Name()); err != nil {
+		log.Printf("File ERROR remove: %s", err)
+		return err
+	}
 
 	return nil
 }

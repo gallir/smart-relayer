@@ -34,6 +34,9 @@ var (
 func getMsg(srv *Server) *Msg {
 	m := msgPool.Get().(*Msg)
 	m.b = msgBytesPool.Get()
+	m.k = ""
+	m.project = ""
+	m.tmp = ""
 	m.gz = false
 	m.shard = -1
 	m.srv = srv
@@ -47,10 +50,6 @@ func putMsg(m *Msg) {
 		msgBytesPool.Put(m.b)
 		m.b = nil
 	}
-
-	m.k = ""
-	m.project = ""
-	m.t = time.Now()
 
 	msgPool.Put(m)
 }
@@ -74,6 +73,8 @@ func (m *Msg) storeTmp() error {
 	}
 	defer tmp.Close()
 
+	m.tmp = tmp.Name()
+
 	// Use the compression if is active in the configuration and the message
 	// is bigger than 512 bytes (minSizeForCompress)
 	if !m.srv.config.Compress || m.b.Len() <= minSizeForCompress {
@@ -88,15 +89,12 @@ func (m *Msg) storeTmp() error {
 
 	// If the compression is ON
 	zw, _ := gzip.NewWriterLevel(tmp, lib.GzCompressionLevel)
-	defer zw.Close()
-
 	if _, err := zw.Write(m.b.B); err != nil {
 		log.Printf("File ERROR: gzip writing log: %s", err)
 		return err
 	}
+	zw.Close()
 
-	m.tmp = tmp.Name()
-	tmp.Write(m.b.B)
 	if err := tmp.Close(); err != nil {
 		return err
 	}
@@ -180,7 +178,7 @@ func (m *Msg) filenamePlain() string {
 func (m *Msg) Bytes() (b []byte, err error) {
 
 	if m.srv.config.Compress {
-		lib.Debugf("FS Read local file: %s/%s - %s", m.path(), m.filenameGz(), m.t.UTC())
+		lib.Debugf("FS Read local file: %s/%s - %s", m.fullpath(), m.filenameGz(), m.t.UTC())
 		b, err = m.bytesFile(fmt.Sprintf("%s/%s", m.fullpath(), m.filenameGz()), true)
 		if err == nil {
 			return
@@ -191,7 +189,7 @@ func (m *Msg) Bytes() (b []byte, err error) {
 		}
 	}
 
-	lib.Debugf("FS Read local file: %s/%s - %s", m.path(), m.filenamePlain(), m.t.UTC())
+	lib.Debugf("FS Read local file: %s/%s - %s", m.fullpath(), m.filenamePlain(), m.t.UTC())
 	b, err = m.bytesFile(fmt.Sprintf("%s/%s", m.fullpath(), m.filenamePlain()), false)
 	if err == nil {
 		return
