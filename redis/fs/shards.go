@@ -3,6 +3,7 @@ package fs
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -68,17 +69,39 @@ func (ss *ShardsServer) reload() {
 	}
 }
 
+func (ss *ShardsServer) Len() (int, int) {
+	ss.Lock()
+	defer ss.Unlock()
+
+	clen := uint32(0)
+	ccap := uint32(0)
+
+	wg := &sync.WaitGroup{}
+	for _, s := range ss.pool {
+		wg.Add(1)
+		go func(s *shard) {
+			defer wg.Done()
+
+			atomic.AddUint32(&ccap, uint32(cap(s.C)))
+			atomic.AddUint32(&clen, uint32(len(s.C)))
+		}(s)
+	}
+	wg.Wait()
+
+	return int(clen), int(ccap)
+}
+
 func (ss *ShardsServer) Exit() {
 	ss.Lock()
 	defer ss.Unlock()
 
 	wg := &sync.WaitGroup{}
-	for i := 0; i > len(ss.pool); i++ {
+	for _, s := range ss.pool {
 		wg.Add(1)
-		go func(i int) {
+		go func(s *shard) {
 			defer wg.Done()
-			ss.pool[i].exit()
-		}(i)
+			s.exit()
+		}(s)
 	}
 	wg.Wait()
 

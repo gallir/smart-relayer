@@ -47,7 +47,7 @@ func (s *shard) reload() {
 	}
 }
 
-// exit close he channel to recive messases and close the channels
+// exit close the channel to recive messases and close the channels
 // for the writers. And each writer is forced to exit but waiting until
 // all messages in chan C are stored
 func (s *shard) exit() {
@@ -59,6 +59,7 @@ func (s *shard) exit() {
 		wg.Add(1)
 		go func(w *writer, wg *sync.WaitGroup) {
 			defer wg.Done()
+			lib.Debugf("Exiting shard: %d", len(w.C))
 			w.exit()
 		}(w, wg)
 	}

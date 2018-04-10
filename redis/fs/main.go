@@ -164,8 +164,10 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		srv.s3sess = nil
 	}
 
-	log.Printf("FS %s config Buffer %d Shards %d/%d (writers), total writers %d, running %d/%d",
-		srv.config.Listen, srv.config.Buffer, srv.shards, srv.config.Writers,
+	shardLen, shardCap := srv.shardServer.Len()
+
+	log.Printf("FS %s config Buffer %d Shards %d %dw %d/%d, total writers %d, running %d/%d",
+		srv.config.Listen, srv.config.Buffer, srv.shards, srv.config.Writers, shardLen, shardCap,
 		int(srv.shards)*srv.config.Writers, atomic.LoadInt64(&srv.running), srv.breakPoint)
 
 	return nil
@@ -327,6 +329,16 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 		return err
 	}
 
+	atomic.AddInt64(&srv.running, 1)
+
+	// Reduce running counter if found some failure
+	// To reduce the counter if everything is ok is in msg.sentToShard()
+	defer func(e error) {
+		if e != nil {
+			atomic.AddInt64(&srv.running, -1)
+		}
+	}(err)
+
 	// Get a message struct from the pool
 	msg := getMsg(srv)
 
@@ -347,7 +359,8 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	if len(items) == 4 {
 		// If have 4 items means that the client sent the content without timestamp
 		// in this case the message will have the current timestamp
-		if b, err := items[3].Bytes(); err == nil {
+		var b []byte
+		if b, err = items[3].Bytes(); err == nil {
 			msg.b.Set(b)
 		} else {
 			return err
@@ -356,13 +369,14 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 		msg.t = time.Now()
 	} else {
 		// If have more than 4 items we read timestamp
-		if i, err := items[3].Int64(); err == nil {
+		var i int64
+		if i, err = items[3].Int64(); err == nil {
 			msg.t = time.Unix(i, 0)
 		} else {
 			return err
 		}
-
-		if b, err := items[4].Bytes(); err == nil {
+		var b []byte
+		if b, err = items[4].Bytes(); err == nil {
 			msg.b.Set(b)
 		} else {
 			return err
@@ -374,7 +388,7 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	// If the server is configured in sync mode we will try to write
 	// the file directly and respons to the client with the result
 	if srv.config.Mode == "sync" {
-		if err := msg.storeTmp(); err != nil {
+		if err = msg.storeTmp(); err != nil {
 			return err
 		}
 	}
@@ -383,7 +397,7 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 	redis.NewResp(r).WriteTo(netCon)
 
 	if srv.config.Mode != "sync" {
-		if err := msg.storeTmp(); err != nil {
+		if err = msg.storeTmp(); err != nil {
 			return err
 		}
 	}

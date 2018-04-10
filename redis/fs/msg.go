@@ -106,8 +106,9 @@ func (m *Msg) storeTmp() error {
 }
 
 func (m *Msg) sentToShard() error {
-	atomic.AddInt64(&m.srv.running, 1)
-	defer atomic.AddInt64(&m.srv.running, -1)
+	defer func() {
+		atomic.AddInt64(&m.srv.running, -1)
+	}()
 
 	ss, err := m.srv.shardServer.get(m.shard)
 	if err != nil {
