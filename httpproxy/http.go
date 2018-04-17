@@ -15,9 +15,12 @@ package httpproxy
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -136,7 +139,31 @@ func (s *HttpProxy) Exit() {
 }
 
 func (s *HttpProxy) serve() {
-	err := s.server.ListenAndServe()
+	var connType string
+
+	if strings.HasPrefix(s.listen, "/") {
+		// It's an Unix socket
+		connType = "unix"
+		os.Remove(s.listen)
+	} else {
+		connType = "tcp"
+	}
+
+	listener, err := net.Listen(connType, s.listen)
+	if err != nil {
+		log.Println("E: Error in http server", s.listen, err)
+		s.Lock()
+		s.server = nil
+		s.Unlock()
+		return
+	}
+
+	if connType == "unix" {
+		// Make sure is accesible for everyone
+		os.Chmod(s.listen, 0777)
+	}
+
+	err = s.server.Serve(listener)
 	log.Println("E: Error in http server", s.listen, err)
 	s.Lock()
 	s.server = nil
