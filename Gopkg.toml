@@ -30,7 +30,6 @@ ignored = [
 	"github.com/pquerna/ffjson/*",
 	"github.com/golang/snappy",
 	"github.com/spaolacci/murmur3",
-  "github.com/gallir/radix.improved/*",
   "github.com/gallir/shortlivedpool",
   "github.com/gallir/bytebufferpool"
 ]
