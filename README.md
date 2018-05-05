@@ -11,7 +11,7 @@ Furthermore, it optimizes the connection by pipelining commands when possible (a
 
 ## Motivation
 
-My team at https://APSL.net is in charge of operations of a large size Amazon AWS platform. It receives more than 500 requests/sec, each one produces several megabytes of logs and hot data that have to be stored on several ElastiCache Redis and Memcache clusters. We wanted to reduce the latency in the clients and also reduce the number of network connections at every workers.
+My team at DOTW is in charge of operations of its large Amazon AWS platform. It receives more than 5000 requests/sec, each one produces several megabytes of logs and hot data that have to be stored on several ElastiCache Redis and Memcache clusters. We wanted to reduce the latency in the clients and also reduce the number of network connections at every workers.
 
 The main application is very complex and huge, more than one million lines in PHP (that the reason the examples are in PHP, we have to test and validate this daemon against PHP Redis clients) and generates more the 50 MBytes of data for each request. So this smart-cache project is a first step to decouple the application from the burden of storing a huge volume of data in the cache clusters.
 
