@@ -138,7 +138,14 @@ func NewWithOpts(o Opts) (*Cluster, error) {
 	}
 	if o.Dialer == nil {
 		o.Dialer = func(_, addr string) (*redis.Client, error) {
-			return redis.DialTimeout("tcp", addr, o.Timeout)
+			r, e := redis.DialTimeout("tcp", addr, o.Timeout)
+			if e != nil {
+				return nil, e
+			}
+			if r == nil {
+				return nil, errors.New("Redis connection nil")
+			}
+			return r, e
 		}
 	}
 
@@ -153,16 +160,34 @@ func NewWithOpts(o Opts) (*Cluster, error) {
 		ChangeCh:      make(chan struct{}),
 	}
 
-	initialPool, err := c.newPool(o.Addr, true)
-	if err != nil {
-		return nil, err
-	}
-	c.pools[o.Addr] = initialPool
+	// Retry with exponential backoff
+	c.setFaulty(true)
+	go func() {
+		wait := 2 * time.Second
+		for {
+			initialPool, err := c.newPool(o.Addr, true)
+			if err == nil {
+				c.pools[o.Addr] = initialPool
+				break
+			}
+			log.Printf("E: Error starting cluster %s, wait %s", err, wait)
+			time.Sleep(wait)
+			wait *= 2
+		}
 
-	go c.spin()
-	if err := c.Reset(); err != nil {
-		return nil, err
-	}
+		go c.spin()
+		wait = 2 * time.Second
+		for {
+			err := c.Reset()
+			if err == nil {
+				break
+			}
+			log.Printf("E: Error initializing cluster %s, wait %s", err, wait)
+			time.Sleep(wait)
+			wait *= 2
+		}
+		c.setFaulty(false)
+	}()
 	return &c, nil
 }
 
@@ -448,7 +473,9 @@ func (c *Cluster) checkFaulty() {
 
 func (c *Cluster) setFaulty(s bool) {
 	if s {
-		atomic.StoreInt32(&c.ioError, 1)
+		if !c.isFaulty() {
+			atomic.StoreInt32(&c.ioError, 1)
+		}
 	} else {
 		atomic.StoreInt32(&c.ioError, 0)
 	}
@@ -555,8 +582,8 @@ func (c *Cluster) clientCmd(
 	}
 
 	// Deal with network error
+	c.checkFaulty()
 	if r.IsType(redis.IOErr) {
-		c.checkFaulty()
 		// Give up and return the most recent error
 		// The faulty monitor will recover
 		return r

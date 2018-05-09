@@ -43,9 +43,8 @@ func NewCustom(network, addr string, size int, df DialFunc) (*Pool, error) {
 			pool = pool[:0]
 			break
 		}
-		pool = pool[0:]
+		pool = append(pool, client)
 	}
-	pool = append(pool, client)
 	p := Pool{
 		Network: network,
 		Addr:    addr,
