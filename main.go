@@ -94,7 +94,7 @@ func startOrReload() bool {
 			// Start a new relayer
 			r, err := getNewServer(conf)
 			if err != nil {
-				log.Fatalln("Error starting relayer", conf.Protocol, conf.URL, err)
+				log.Println("E: Error starting relayer", conf.Protocol, conf.URL, err)
 			}
 			lib.Debugf("Starting new relayer from %s to %s", conf.Listen, conf.URL)
 			totalRelayers++
@@ -105,7 +105,7 @@ func startOrReload() bool {
 			// The relayer exists, reload it
 			err := endpoint.Reload(&conf)
 			if err != nil {
-				log.Fatalln("Error reloading", conf.Protocol, conf.URL, err)
+				log.Println("E: Error reloading", conf.Protocol, conf.URL, err)
 			}
 		}
 	}

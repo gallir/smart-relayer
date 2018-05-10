@@ -18,6 +18,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -54,6 +55,7 @@ type DialFunc func(network, addr string) (*redis.Client, error)
 
 // Cluster wraps a Client and accounts for all redis cluster logic
 type Cluster struct {
+	sync.Mutex
 	o Opts
 	mapping
 	pools            map[string]clusterPool
@@ -63,6 +65,7 @@ type Cluster struct {
 	stopCh           chan struct{}
 	ioError          int32
 	ioMonitorRunning int32
+	starting         bool
 	started          bool
 	closed           bool
 
@@ -164,40 +167,59 @@ func NewWithOpts(o Opts) (*Cluster, error) {
 
 	// Retry with exponential backoff
 	c.setFaulty(true)
-	go func() {
-		wait := 2 * time.Second
-		for {
-			if c.closed {
-				return
-			}
-			initialPool, err := c.newPool(o.Addr, true)
-			if err == nil {
-				c.pools[o.Addr] = initialPool
-				break
-			}
-			log.Printf("E: Error starting cluster %s, wait %s", err, wait)
-			time.Sleep(wait)
-			wait *= 2
-		}
-
-		go c.spin()
-		wait = 2 * time.Second
-		for {
-			if c.closed {
-				return
-			}
-			err := c.Reset()
-			if err == nil {
-				break
-			}
-			log.Printf("E: Error initializing cluster %s, wait %s", err, wait)
-			time.Sleep(wait)
-			wait *= 2
-		}
-		c.started = true
-		c.setFaulty(false)
-	}()
+	go c.startWithRetry()
 	return &c, nil
+}
+
+func (c *Cluster) startWithRetry() {
+	wait := 2 * time.Second
+	c.Lock()
+	otherStarting := c.starting
+	c.Unlock()
+	for {
+		c.Lock()
+		closed := c.closed
+		started := c.started
+		c.starting = true
+		if closed || started {
+			c.Unlock()
+			return
+		}
+		initialPool, err := c.newPool(c.o.Addr, true)
+		if err == nil {
+			c.pools[c.o.Addr] = initialPool
+			break
+		}
+		if otherStarting {
+			// Avoid several goroutines waiting trying to start
+			c.Unlock()
+			return
+		}
+		c.Unlock()
+		log.Printf("E: Error starting cluster %s, wait %s", err, wait)
+		time.Sleep(wait)
+		wait *= 2
+	}
+	c.starting = false
+	c.started = true
+	c.Unlock()
+
+	log.Printf("I: Started cluster %s", c.o.Addr)
+	go c.spin()
+	wait = 2 * time.Second
+	for {
+		if c.closed {
+			return
+		}
+		err := c.Reset()
+		if err == nil {
+			break
+		}
+		log.Printf("E: Error initializing cluster %s, wait %s", err, wait)
+		time.Sleep(wait)
+		wait *= 2
+	}
+	c.setFaulty(false)
 }
 
 func (c *Cluster) newPool(addr string, clearThrottle bool) (clusterPool, error) {
@@ -291,9 +313,15 @@ func (c *Cluster) getRandomPoolInner() clusterPool {
 // the same time and it will only actually occur once (subsequent clients will
 // have nil returned immediately).
 func (c *Cluster) Reset() error {
-	if !c.started || c.closed {
+	if c.closed {
 		return nil
 	}
+
+	if !c.started {
+		go c.startWithRetry()
+		return nil
+	}
+
 	respCh := make(chan error)
 	c.callCh <- func(c *Cluster) {
 		respCh <- c.resetInner()

@@ -219,5 +219,11 @@ func (srv *Server) Exit() {
 	if srv.listener != nil {
 		srv.listener.Close()
 	}
+	if srv.pool != nil {
+		p, ok := srv.pool.(*cluster.Cluster)
+		if ok {
+			go p.Close()
+		}
+	}
 	srv.done <- true
 }
