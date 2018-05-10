@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
 
 // Client is the thread that connect to the remote redis server

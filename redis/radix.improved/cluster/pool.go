@@ -1,8 +1,8 @@
 package cluster
 
 import (
-	"github.com/gallir/radix.improved/pool"
-	"github.com/gallir/radix.improved/redis"
+	"github.com/gallir/smart-relayer/redis/radix.improved/pool"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
 
 // clusterPool wraps the normal pool fairly transparently. The major change

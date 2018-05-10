@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gabrielperezs/streamspooler/kinesis"
-	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
 
 // Server is the thread that listen for clients' connections

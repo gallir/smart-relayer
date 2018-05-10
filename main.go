@@ -13,7 +13,6 @@ import (
 
 	"sync"
 
-	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/httpproxy"
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/cluster"
@@ -21,11 +20,12 @@ import (
 	"github.com/gallir/smart-relayer/redis/fs"
 	"github.com/gallir/smart-relayer/redis/kinesis"
 	"github.com/gallir/smart-relayer/redis/radix"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 	"github.com/gallir/smart-relayer/redis/rsqs"
 )
 
 const (
-	version = "8.5.1"
+	version = "8.5.2"
 )
 
 var (

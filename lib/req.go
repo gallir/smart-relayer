@@ -4,7 +4,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/gallir/radix.improved/redis"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
 
 const (

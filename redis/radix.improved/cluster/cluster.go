@@ -22,8 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gallir/radix.improved/pool"
-	"github.com/gallir/radix.improved/redis"
+	"github.com/gallir/smart-relayer/redis/radix.improved/pool"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
 
 const (

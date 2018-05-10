@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"strings"
 
-	"github.com/gallir/radix.improved/redis"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
 
 // LuaEval calls EVAL on the given Cmder for the given script, passing the key

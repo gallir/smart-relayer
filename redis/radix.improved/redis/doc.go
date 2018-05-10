@@ -3,11 +3,11 @@
 //
 // THE FUNCTIONALITY PROVIDED IN THIS PACKAGE IS NOT THREAD-SAFE. To use a
 // single redis instance amongst multiple go-routines, check out the pool
-// subpackage (http://godoc.org/github.com/gallir/radix.improved/pool)
+// subpackage (http://godoc.org/github.com/gallir/smart-relayer/redis/radix.improved/pool)
 //
 // To import inside your package do:
 //
-//	import "github.com/gallir/radix.improved/redis"
+//	import "github.com/gallir/smart-relayer/redis/radix.improved/redis"
 //
 // Connecting
 //
