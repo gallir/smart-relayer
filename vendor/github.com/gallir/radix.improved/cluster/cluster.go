@@ -63,6 +63,8 @@ type Cluster struct {
 	stopCh           chan struct{}
 	ioError          int32
 	ioMonitorRunning int32
+	started          bool
+	closed           bool
 
 	// This is written to whenever a slot miss (either a MOVED or ASK) is
 	// encountered. This is mainly for informational purposes, it's not meant to
@@ -165,6 +167,9 @@ func NewWithOpts(o Opts) (*Cluster, error) {
 	go func() {
 		wait := 2 * time.Second
 		for {
+			if c.closed {
+				return
+			}
 			initialPool, err := c.newPool(o.Addr, true)
 			if err == nil {
 				c.pools[o.Addr] = initialPool
@@ -178,6 +183,9 @@ func NewWithOpts(o Opts) (*Cluster, error) {
 		go c.spin()
 		wait = 2 * time.Second
 		for {
+			if c.closed {
+				return
+			}
 			err := c.Reset()
 			if err == nil {
 				break
@@ -186,6 +194,7 @@ func NewWithOpts(o Opts) (*Cluster, error) {
 			time.Sleep(wait)
 			wait *= 2
 		}
+		c.started = true
 		c.setFaulty(false)
 	}()
 	return &c, nil
@@ -282,6 +291,9 @@ func (c *Cluster) getRandomPoolInner() clusterPool {
 // the same time and it will only actually occur once (subsequent clients will
 // have nil returned immediately).
 func (c *Cluster) Reset() error {
+	if !c.started || c.closed {
+		return nil
+	}
 	respCh := make(chan error)
 	c.callCh <- func(c *Cluster) {
 		respCh <- c.resetInner()
@@ -700,13 +712,16 @@ func (c *Cluster) GetAddrForKey(key string) string {
 // Close calls Close on all connected clients. Once this is called no other
 // methods should be called on this instance of Cluster
 func (c *Cluster) Close() {
-	c.callCh <- func(c *Cluster) {
-		for addr, p := range c.pools {
-			p.Empty()
-			delete(c.pools, addr)
-		}
-		if c.resetThrottle != nil {
-			c.resetThrottle.Stop()
+	c.closed = true
+	if c.started {
+		c.callCh <- func(c *Cluster) {
+			for addr, p := range c.pools {
+				p.Empty()
+				delete(c.pools, addr)
+			}
+			if c.resetThrottle != nil {
+				c.resetThrottle.Stop()
+			}
 		}
 	}
 	close(c.stopCh)
