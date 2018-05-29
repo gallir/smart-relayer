@@ -3,9 +3,11 @@ package redis
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"reflect"
 	"strconv"
@@ -1081,7 +1083,105 @@ func (r *Resp) Uncompress(marker []byte) *Resp {
 		return nil
 	}
 	for i := range vals {
-		(&vals[i]).Uncompress(marker)
+		uncompressed := (&vals[i]).Uncompress(marker)
+		if uncompressed == nil {
+			(&vals[i]).UncompressGz()
+		}
+	}
+	return r
+}
+
+// CompressGz compresses an entire *Resp with GZ
+func (r *Resp) CompressGz(minSize int, level int) *Resp {
+	if r.IsType(Str) {
+		b, ok := r.val.([]byte)
+		if !ok || len(b) < minSize {
+			return nil
+		}
+
+		bb := bytebufferpool.Get()
+
+		gzWriter, err := gzip.NewWriterLevel(bb, level)
+		if err != nil {
+			log.Printf("ERROR redis compression: %s", err)
+			return nil
+		}
+		gzWriter.Write(b)
+		gzWriter.Close()
+
+		r.val = bb.B
+
+		if r.byteBuffer != nil {
+			bytebufferpool.Put(r.byteBuffer)
+			r.byteBuffer = bb
+		}
+
+		return r
+	}
+
+	if !r.IsType(Array) {
+		return nil
+	}
+	vals, ok := r.val.([]Resp)
+	if !ok {
+		return nil
+	}
+	for i := range vals {
+		(&vals[i]).CompressGz(minSize, level)
+	}
+	return r
+}
+
+// Uncompress compresses an entire *Resp
+func (r *Resp) UncompressGz() *Resp {
+	if r.IsType(Str) {
+		b, ok := r.val.([]byte)
+		if !ok || len(b) < 2 {
+			return nil
+		}
+
+		// 2.3.1. Member header and trailer
+		// ID2 (IDentification 2)
+		// These have the fixed values ID1 = 31 (0x1f, \037), ID2 = 139
+		// (0x8b, \213), to identify the file as being in gzip format.
+		// http://www.ietf.org/rfc/rfc1952.txt
+		if b[0] != 31 || b[1] != 139 {
+			return nil
+		}
+
+		bb := bytebufferpool.Get()
+
+		readUncompress, err := gzip.NewReader(bytes.NewBuffer(b))
+		if err != nil {
+			log.Printf("ERROR: starting gzip reader: %s", err)
+			return r
+		}
+		if _, err := bb.ReadFrom(readUncompress); err != nil {
+			log.Printf("ERROR: reading from gzip: %s", err)
+			return nil
+		}
+		if err := readUncompress.Close(); err != nil {
+			log.Printf("ERROR: can't close the reader of gunzip: %s", err)
+			return nil
+		}
+
+		if r.byteBuffer != nil {
+			bytebufferpool.Put(r.byteBuffer)
+			r.byteBuffer = bb
+		}
+		r.val = bb.B
+		return r
+	}
+
+	if !r.IsType(Array) {
+		return nil
+	}
+	vals, ok := r.val.([]Resp)
+	if !ok {
+		return nil
+	}
+	for i := range vals {
+		(&vals[i]).UncompressGz()
 	}
 	return r
 }

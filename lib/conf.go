@@ -29,6 +29,8 @@ type RelayerConfig struct {
 	MaxIdleConnections int    // Pool management
 	Compress           bool
 	Uncompress         bool
+	Gzip               int  // If > 0 is enabled and is the compression level
+	Gunzip             bool // Read with uncompress
 
 	UseBufferPool bool // used by the http proxy, enable or diable buffer pool
 

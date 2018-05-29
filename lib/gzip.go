@@ -11,18 +11,20 @@ const (
 	GzCompressionLevel = 3
 )
 
-var gzipWriterPool = sync.Pool{
-	New: func() interface{} {
-		w, _ := gzip.NewWriterLevel(ioutil.Discard, GzCompressionLevel)
-		return w
-	},
+var gzipWriterPool = sync.Pool{}
+
+func GetGzipWriterLevel(w io.Writer, level int) *gzip.Writer {
+	zw := gzipWriterPool.Get().(*gzip.Writer)
+	if zw == nil {
+		zw, _ = gzip.NewWriterLevel(ioutil.Discard, level)
+	} else {
+		zw.Reset(w)
+	}
+	return zw
 }
 
 func GetGzipWriter(w io.Writer) *gzip.Writer {
-	zw := gzipWriterPool.Get().(*gzip.Writer)
-	zw.Reset(w)
-	return zw
-	return zw
+	return GetGzipWriterLevel(w, GzCompressionLevel)
 }
 
 func PutGzipWriter(zw *gzip.Writer) {

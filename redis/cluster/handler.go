@@ -78,7 +78,7 @@ func (h *connHandler) process(req *redis.Resp) {
 		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
 			req:        req,
-			compress:   h.srv.config.Compress && cmd != evalCommand,
+			compress:   (h.srv.config.Compress || h.srv.config.Gzip != 0) && cmd != evalCommand,
 			mustAnswer: false,
 		}
 		return
@@ -90,7 +90,7 @@ func (h *connHandler) process(req *redis.Resp) {
 		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
 			req:        req,
-			compress:   h.srv.config.Compress && cmd != evalCommand,
+			compress:   (h.srv.config.Compress || h.srv.config.Gzip != 0) && cmd != evalCommand,
 			mustAnswer: true,
 		}
 		return
@@ -106,10 +106,16 @@ func (h *connHandler) sendWorker() {
 	}
 }
 
-func (h *connHandler) sender(mustAnswer bool, req *redis.Resp, compress, async bool) {
+func (h *connHandler) sender(mustAnswer bool, req *redis.Resp, compress bool, async bool) {
 	if compress {
-		req.Compress(lib.MinCompressSize, lib.MagicSnappy)
+		switch {
+		case h.srv.config.Gzip != 0:
+			req.CompressGz(lib.MinCompressSize, h.srv.config.Gzip)
+		case h.srv.config.Compress:
+			req.Compress(lib.MinCompressSize, lib.MagicSnappy)
+		}
 	}
+
 	a, err := req.Array()
 	if err != nil {
 		if mustAnswer {
@@ -127,9 +133,16 @@ func (h *connHandler) sender(mustAnswer bool, req *redis.Resp, compress, async b
 
 	resp := h.srv.pool.Cmd(cmd, args[1:])
 
+	uncompressed := false
 	if h.srv.config.Compress || h.srv.config.Uncompress {
-		resp.Uncompress(lib.MagicSnappy)
+		if resp.Uncompress(lib.MagicSnappy) != nil {
+			uncompressed = true
+		}
 	}
+	if !uncompressed && (h.srv.config.Gunzip || h.srv.config.Gzip != 0) {
+		resp.UncompressGz()
+	}
+
 	if mustAnswer {
 		resp.WriteTo(h.conn)
 	}

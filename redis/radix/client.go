@@ -192,9 +192,17 @@ func (clt *Client) redisListener(buf io.ReadWriter, queue chan *lib.Request) {
 			return
 		}
 
+		uncompressed := false
 		if clt.config.Compress || clt.config.Uncompress {
-			r.Uncompress(lib.MagicSnappy)
+			if r.Uncompress(lib.MagicSnappy) != nil {
+				uncompressed = true
+			}
 		}
+
+		if !uncompressed && (clt.config.Gunzip || clt.config.Gzip != 0) {
+			r.UncompressGz()
+		}
+
 		if req.Conn != nil {
 			r.WriteTo(req.Conn)
 		}
@@ -237,8 +245,13 @@ func (clt *Client) write(r *lib.Request) (int64, error) {
 
 	resp := r.Resp
 	// Use compression just if is not an EVAL command
-	if clt.config.Compress && r.Command != evalCommand {
-		resp.Compress(lib.MinCompressSize, lib.MagicSnappy)
+	if r.Command != evalCommand {
+		switch {
+		case clt.config.Gzip != 0:
+			resp.CompressGz(lib.MinCompressSize, clt.config.Gzip)
+		case clt.config.Compress:
+			resp.Compress(lib.MinCompressSize, lib.MagicSnappy)
+		}
 	}
 
 	c, err := resp.WriteTo(clt.buf)
