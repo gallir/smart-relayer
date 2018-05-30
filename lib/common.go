@@ -28,7 +28,6 @@ const (
 var (
 	// GlobalConfig is the configuration for the main programm
 	GlobalConfig MainConfig
-	MagicSnappy  = []byte("$sy$")
 )
 
 func init() {
