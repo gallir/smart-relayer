@@ -192,15 +192,8 @@ func (clt *Client) redisListener(buf io.ReadWriter, queue chan *lib.Request) {
 			return
 		}
 
-		uncompressed := false
-		if clt.config.Compress || clt.config.Uncompress {
-			if r.Uncompress(lib.MagicSnappy) != nil {
-				uncompressed = true
-			}
-		}
-
-		if !uncompressed && (clt.config.Gunzip || clt.config.Gzip != 0) {
-			r.UncompressGz()
+		if clt.config.Compress || clt.config.Uncompress || clt.config.Gzip != 0 || clt.config.Gunzip {
+			r.Uncompress()
 		}
 
 		if req.Conn != nil {

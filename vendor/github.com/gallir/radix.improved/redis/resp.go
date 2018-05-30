@@ -23,6 +23,17 @@ var (
 
 	// UsePool enable to use vayala bytes buffer pools
 	UsePool = 0
+
+	// MarkerSnappy are the first bytes in the snappy response
+	MarkerSnappy = []byte("$sy$")
+
+	// MarkerGz are the first two bytes in GZ response
+	// 2.3.1. Member header and trailer
+	// ID2 (IDentification 2)
+	// These have the fixed values ID1 = 31 (0x1f, \037), ID2 = 139
+	// (0x8b, \213), to identify the file as being in gzip format.
+	// http://www.ietf.org/rfc/rfc1952.txt
+	MarkerGz = []byte{31, 139}
 )
 
 // RespType is a field on every Resp which indicates the type of the data it
@@ -51,6 +62,10 @@ const (
 	Err = IOErr | AppErr
 
 	pollMinSize = 64
+
+	// Compression codecs
+	CodecSnappy int = 1 << iota
+	CodecGZ
 )
 
 var (
@@ -1041,56 +1056,6 @@ func (r *Resp) Compress(minSize int, marker []byte) *Resp {
 	return r
 }
 
-// Uncompress compresses an entire *Resp
-func (r *Resp) Uncompress(marker []byte) *Resp {
-	if r.IsType(Str) {
-		b, ok := r.val.([]byte)
-		if !ok || !bytes.HasPrefix(b, marker) {
-			return nil
-		}
-
-		n := snappy.MaxEncodedLen(len(b)) + len(marker)
-		need := (n/compressPageSize + 1) * compressPageSize
-
-		var buf []byte
-		var bb *bytebufferpool.ByteBuffer
-
-		if r.byteBuffer != nil {
-			bb = bytebufferpool.GetLen(need)
-			buf = bb.B
-		} else {
-			buf = make([]byte, (n/compressPageSize+1)*compressPageSize)
-		}
-
-		uncompressed, e := snappy.Decode(buf, b[len(marker):])
-		if e != nil {
-			return nil
-		}
-
-		if r.byteBuffer != nil {
-			bytebufferpool.Put(r.byteBuffer)
-			r.byteBuffer = bb
-		}
-		r.val = uncompressed
-		return r
-	}
-
-	if !r.IsType(Array) {
-		return nil
-	}
-	vals, ok := r.val.([]Resp)
-	if !ok {
-		return nil
-	}
-	for i := range vals {
-		uncompressed := (&vals[i]).Uncompress(marker)
-		if uncompressed == nil {
-			(&vals[i]).UncompressGz()
-		}
-	}
-	return r
-}
-
 // CompressGz compresses an entire *Resp with GZ
 func (r *Resp) CompressGz(minSize int, level int) *Resp {
 	if r.IsType(Str) {
@@ -1132,45 +1097,22 @@ func (r *Resp) CompressGz(minSize int, level int) *Resp {
 	return r
 }
 
-// Uncompress compresses an entire *Resp
-func (r *Resp) UncompressGz() *Resp {
+// Uncompress uncompress an entire *Resp
+func (r *Resp) Uncompress() *Resp {
 	if r.IsType(Str) {
 		b, ok := r.val.([]byte)
-		if !ok || len(b) < 2 {
+		if !ok {
 			return nil
 		}
 
-		// 2.3.1. Member header and trailer
-		// ID2 (IDentification 2)
-		// These have the fixed values ID1 = 31 (0x1f, \037), ID2 = 139
-		// (0x8b, \213), to identify the file as being in gzip format.
-		// http://www.ietf.org/rfc/rfc1952.txt
-		if b[0] != 31 || b[1] != 139 {
-			return nil
-		}
-
-		bb := bytebufferpool.Get()
-
-		readUncompress, err := gzip.NewReader(bytes.NewBuffer(b))
-		if err != nil {
-			log.Printf("ERROR: starting gzip reader: %s", err)
+		switch {
+		case bytes.HasPrefix(b, MarkerSnappy):
+			return r.UncompressSnappy(b)
+		case bytes.HasPrefix(b, MarkerGz):
+			return r.UncompressGz(b)
+		default:
 			return r
 		}
-		if _, err := bb.ReadFrom(readUncompress); err != nil {
-			log.Printf("ERROR: reading from gzip: %s", err)
-			return nil
-		}
-		if err := readUncompress.Close(); err != nil {
-			log.Printf("ERROR: can't close the reader of gunzip: %s", err)
-			return nil
-		}
-
-		if r.byteBuffer != nil {
-			bytebufferpool.Put(r.byteBuffer)
-			r.byteBuffer = bb
-		}
-		r.val = bb.B
-		return r
 	}
 
 	if !r.IsType(Array) {
@@ -1181,7 +1123,60 @@ func (r *Resp) UncompressGz() *Resp {
 		return nil
 	}
 	for i := range vals {
-		(&vals[i]).UncompressGz()
+		(&vals[i]).Uncompress()
 	}
+	return r
+}
+
+// UncompressSnappy uncompresses an Str *Resp with Snappy
+func (r *Resp) UncompressSnappy(b []byte) *Resp {
+	n := snappy.MaxEncodedLen(len(b)) + len(MarkerSnappy)
+	need := (n/compressPageSize + 1) * compressPageSize
+
+	var buf []byte
+	var bb *bytebufferpool.ByteBuffer
+
+	if r.byteBuffer != nil {
+		bb = bytebufferpool.GetLen(need)
+		buf = bb.B
+	} else {
+		buf = make([]byte, (n/compressPageSize+1)*compressPageSize)
+	}
+
+	uncompressed, e := snappy.Decode(buf, b[len(MarkerSnappy):])
+	if e != nil {
+		return nil
+	}
+
+	if r.byteBuffer != nil {
+		bytebufferpool.Put(r.byteBuffer)
+		r.byteBuffer = bb
+	}
+	r.val = uncompressed
+	return r
+}
+
+// UncompressGz uncompresses an Str *Resp with GZ
+func (r *Resp) UncompressGz(b []byte) *Resp {
+	bb := bytebufferpool.Get()
+	readUncompress, err := gzip.NewReader(bytes.NewBuffer(b))
+	if err != nil {
+		log.Printf("ERROR: starting gzip reader: %s", err)
+		return r
+	}
+	if _, err := bb.ReadFrom(readUncompress); err != nil {
+		log.Printf("ERROR: reading from gzip: %s", err)
+		return nil
+	}
+	if err := readUncompress.Close(); err != nil {
+		log.Printf("ERROR: can't close the reader of gunzip: %s", err)
+		return nil
+	}
+
+	if r.byteBuffer != nil {
+		bytebufferpool.Put(r.byteBuffer)
+		r.byteBuffer = bb
+	}
+	r.val = bb.B
 	return r
 }
