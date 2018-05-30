@@ -132,7 +132,9 @@ func (h *connHandler) sender(mustAnswer bool, req *redis.Resp, compress bool, as
 	}
 
 	resp := h.srv.pool.Cmd(cmd, args[1:])
-	resp.Uncompress()
+	if h.srv.config.Gunzip || h.srv.config.Gzip != 0 || h.srv.config.Compress || h.srv.config.Uncompress {
+		resp.Uncompress()
+	}
 
 	if mustAnswer {
 		resp.WriteTo(h.conn)
