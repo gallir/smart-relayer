@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
 
 // Server is the thread that listen for clients' connections

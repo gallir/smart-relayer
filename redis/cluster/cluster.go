@@ -9,11 +9,11 @@ import (
 
 	"time"
 
-	"github.com/gallir/radix.improved/cluster"
-	"github.com/gallir/radix.improved/pool"
-	"github.com/gallir/radix.improved/redis"
-	"github.com/gallir/radix.improved/util"
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/redis/radix.improved/cluster"
+	"github.com/gallir/smart-relayer/redis/radix.improved/pool"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
+	"github.com/gallir/smart-relayer/redis/radix.improved/util"
 )
 
 // Server is the thread that listen for clients' connections

@@ -16,20 +16,9 @@
   ]
   revision = "e92f9a952c70caa94e5819dedf391e1595bc6c9d"
 
-[[projects]]
-  branch = "master"
-  name = "github.com/gallir/radix.improved"
-  packages = [
-    "cluster",
-    "pool",
-    "redis",
-    "util"
-  ]
-  revision = "f79dde3618bc2814343e6288ff0d53344495d6ea"
-
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "d86a2e80275704da64dc02579949ea33b6d1fcadd12205a1381fc5c1c991bea3"
+  inputs-digest = "bb5cc5f10975da8270c8d0dfa22a8606f6f177650292ed2baf7a62a808427b94"
   solver-name = "gps-cdcl"
   solver-version = 1

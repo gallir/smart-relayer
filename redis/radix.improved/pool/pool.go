@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gallir/radix.improved/redis"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
 
 // Pool is a simple connection pool for redis Clients. It will create a small

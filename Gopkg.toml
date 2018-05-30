@@ -48,10 +48,6 @@ ignored = [
 
 [[constraint]]
   branch = "master"
-  name = "github.com/gallir/radix.improved"
-
-[[constraint]]
-  branch = "master"
   name = "github.com/golang/snappy"
 
 [[constraint]]

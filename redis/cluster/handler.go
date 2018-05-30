@@ -5,8 +5,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
 
 const (

@@ -12,8 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 
-	"github.com/gallir/radix.improved/redis"
 	"github.com/gallir/smart-relayer/lib"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
 
 const (
