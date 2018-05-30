@@ -112,7 +112,7 @@ func (h *connHandler) sender(mustAnswer bool, req *redis.Resp, compress bool, as
 		case h.srv.config.Gzip != 0:
 			req.CompressGz(lib.MinCompressSize, h.srv.config.Gzip)
 		case h.srv.config.Compress:
-			req.Compress(lib.MinCompressSize, redis.MarkerSnappy)
+			req.CompressSnappy(lib.MinCompressSize, redis.MarkerSnappy)
 		}
 	}
 

@@ -243,7 +243,7 @@ func (clt *Client) write(r *lib.Request) (int64, error) {
 		case clt.config.Gzip != 0:
 			resp.CompressGz(lib.MinCompressSize, clt.config.Gzip)
 		case clt.config.Compress:
-			resp.Compress(lib.MinCompressSize, redis.MarkerSnappy)
+			resp.CompressSnappy(lib.MinCompressSize, redis.MarkerSnappy)
 		}
 	}
 

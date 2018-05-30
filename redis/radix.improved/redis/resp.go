@@ -1012,8 +1012,8 @@ func (r *Resp) ReleaseBuffers() {
 
 const compressPageSize = 256
 
-// Compress compresses an entire *Resp
-func (r *Resp) Compress(minSize int, marker []byte) *Resp {
+// CompressSnappy compresses an entire *Resp
+func (r *Resp) CompressSnappy(minSize int, marker []byte) *Resp {
 	if r.IsType(Str) {
 		b, ok := r.val.([]byte)
 		if !ok || len(b) < minSize {
@@ -1021,15 +1021,9 @@ func (r *Resp) Compress(minSize int, marker []byte) *Resp {
 		}
 		n := snappy.MaxEncodedLen(len(b)) + len(marker)
 		need := (n/compressPageSize + 1) * compressPageSize
-		var buf []byte
-		var bb *bytebufferpool.ByteBuffer
 
-		if r.byteBuffer != nil {
-			bb = bytebufferpool.GetLen(need)
-			buf = bb.B
-		} else {
-			buf = make([]byte, need)
-		}
+		bb := bytebufferpool.GetLen(need)
+		buf := bb.B
 		copy(buf, marker)
 		compressed := snappy.Encode(buf[len(marker):], b)
 		if len(buf) <= len(marker) {
@@ -1037,8 +1031,8 @@ func (r *Resp) Compress(minSize int, marker []byte) *Resp {
 		}
 		if r.byteBuffer != nil {
 			bytebufferpool.Put(r.byteBuffer)
-			r.byteBuffer = bb
 		}
+		r.byteBuffer = bb
 		r.val = buf[:len(marker)+len(compressed)]
 		return r
 	}
@@ -1051,7 +1045,7 @@ func (r *Resp) Compress(minSize int, marker []byte) *Resp {
 		return nil
 	}
 	for i := range vals {
-		(&vals[i]).Compress(minSize, marker)
+		(&vals[i]).CompressSnappy(minSize, marker)
 	}
 	return r
 }
@@ -1065,7 +1059,6 @@ func (r *Resp) CompressGz(minSize int, level int) *Resp {
 		}
 
 		bb := bytebufferpool.Get()
-
 		gzWriter, err := gzip.NewWriterLevel(bb, level)
 		if err != nil {
 			log.Printf("ERROR redis compression: %s", err)
@@ -1078,8 +1071,8 @@ func (r *Resp) CompressGz(minSize int, level int) *Resp {
 
 		if r.byteBuffer != nil {
 			bytebufferpool.Put(r.byteBuffer)
-			r.byteBuffer = bb
 		}
+		r.byteBuffer = bb
 
 		return r
 	}
@@ -1133,15 +1126,8 @@ func (r *Resp) UncompressSnappy(b []byte) *Resp {
 	n := snappy.MaxEncodedLen(len(b)) + len(MarkerSnappy)
 	need := (n/compressPageSize + 1) * compressPageSize
 
-	var buf []byte
-	var bb *bytebufferpool.ByteBuffer
-
-	if r.byteBuffer != nil {
-		bb = bytebufferpool.GetLen(need)
-		buf = bb.B
-	} else {
-		buf = make([]byte, (n/compressPageSize+1)*compressPageSize)
-	}
+	bb := bytebufferpool.GetLen(need)
+	buf := bb.B
 
 	uncompressed, e := snappy.Decode(buf, b[len(MarkerSnappy):])
 	if e != nil {
@@ -1150,8 +1136,8 @@ func (r *Resp) UncompressSnappy(b []byte) *Resp {
 
 	if r.byteBuffer != nil {
 		bytebufferpool.Put(r.byteBuffer)
-		r.byteBuffer = bb
 	}
+	r.byteBuffer = bb
 	r.val = uncompressed
 	return r
 }
@@ -1175,8 +1161,8 @@ func (r *Resp) UncompressGz(b []byte) *Resp {
 
 	if r.byteBuffer != nil {
 		bytebufferpool.Put(r.byteBuffer)
-		r.byteBuffer = bb
 	}
+	r.byteBuffer = bb
 	r.val = bb.B
 	return r
 }
