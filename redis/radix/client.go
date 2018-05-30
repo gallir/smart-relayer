@@ -16,7 +16,7 @@ import (
 // Client is the thread that connect to the remote redis server
 type Client struct {
 	sync.Mutex
-	config             lib.RelayerConfig
+	config             *lib.RelayerConfig
 	mode               int
 	ready              int32
 	connected          int32
@@ -52,7 +52,7 @@ func (clt *Client) Reload(c *lib.RelayerConfig) {
 	if clt.isReady() {
 		clt.flush(true)
 	}
-	clt.config = *c
+	clt.config = c
 	clt.mode = clt.config.Type()
 }
 

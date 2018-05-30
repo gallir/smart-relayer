@@ -107,8 +107,8 @@ func (p *Pool) Put(c *Client) {
 	}
 
 	// Update the config before go back to the pool
-	if c.config != p.config {
-		c.config = p.config
+	if c.config != &p.config {
+		c.config = &p.config
 	}
 
 	select {
