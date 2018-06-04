@@ -3,7 +3,6 @@ package ifaceS3
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"io"
 	"io/ioutil"
 	"log"
@@ -12,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/gzip"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/gallir/smart-relayer/lib"

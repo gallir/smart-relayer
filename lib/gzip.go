@@ -1,10 +1,11 @@
 package lib
 
 import (
-	"compress/gzip"
 	"io"
 	"io/ioutil"
 	"sync"
+
+	"github.com/klauspost/compress/gzip"
 )
 
 const (

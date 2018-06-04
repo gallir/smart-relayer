@@ -3,7 +3,6 @@ package redis
 import (
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +11,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/klauspost/compress/gzip"
 
 	"github.com/gallir/bytebufferpool"
 	"github.com/golang/snappy"

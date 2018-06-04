@@ -1,7 +1,6 @@
 package fs
 
 import (
-	"compress/gzip"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -11,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/klauspost/compress/gzip"
 
 	"github.com/gallir/bytebufferpool"
 	"github.com/gallir/smart-relayer/lib"
