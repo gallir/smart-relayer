@@ -17,10 +17,9 @@ var gzipWriterPool = sync.Pool{}
 func GetGzipWriterLevel(w io.Writer, level int) *gzip.Writer {
 	zw := gzipWriterPool.Get().(*gzip.Writer)
 	if zw == nil {
-		zw, _ = gzip.NewWriterLevel(ioutil.Discard, level)
-	} else {
-		zw.Reset(w)
+		zw, _ = gzip.NewWriterLevel(nil, level)
 	}
+	zw.Reset(w)
 	return zw
 }
 

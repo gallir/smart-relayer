@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/klauspost/compress/gzip"
 
@@ -35,6 +36,7 @@ var (
 	// (0x8b, \213), to identify the file as being in gzip format.
 	// http://www.ietf.org/rfc/rfc1952.txt
 	MarkerGz = []byte{31, 139}
+	zippers  = sync.Pool{}
 )
 
 // RespType is a field on every Resp which indicates the type of the data it
@@ -1060,13 +1062,15 @@ func (r *Resp) CompressGz(minSize int, level int) *Resp {
 		}
 
 		bb := bytebufferpool.Get()
-		gzWriter, err := gzip.NewWriterLevel(bb, level)
+		gzWriter, err := getZipper(level)
 		if err != nil {
 			log.Printf("ERROR redis compression: %s", err)
 			return nil
 		}
+		gzWriter.Reset(bb)
 		gzWriter.Write(b)
 		gzWriter.Close()
+		putZipper(gzWriter)
 
 		r.val = bb.B
 
@@ -1166,4 +1170,17 @@ func (r *Resp) UncompressGz(b []byte) *Resp {
 	r.byteBuffer = bb
 	r.val = bb.B
 	return r
+}
+
+// Functions to re-use the writer for gzip compression
+func getZipper(l int) (*gzip.Writer, error) {
+	zi := zippers.Get()
+	if zi == nil {
+		return gzip.NewWriterLevel(nil, l)
+	}
+	return zi.(*gzip.Writer), nil
+}
+
+func putZipper(z *gzip.Writer) {
+	zippers.Put(z)
 }
