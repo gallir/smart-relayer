@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/klauspost/compress/gzip"
-
 	"github.com/gallir/bytebufferpool"
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/fs/ifaceS3"
@@ -89,7 +87,7 @@ func (m *Msg) storeTmp() error {
 	m.gz = true
 
 	// If the compression is ON
-	zw, _ := gzip.NewWriterLevel(tmp, lib.GzCompressionLevel)
+	zw := lib.GetGzipWriterLevel(tmp, lib.GzCompressionLevel)
 	if _, err := zw.Write(m.b.B); err != nil {
 		log.Printf("File ERROR: gzip writing log: %s", err)
 		return err
@@ -101,6 +99,7 @@ func (m *Msg) storeTmp() error {
 	}
 
 	msgBytesPool.Put(m.b)
+	lib.PutGzipWriter(zw)
 	m.b = nil
 
 	return nil
