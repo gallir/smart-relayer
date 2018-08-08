@@ -1,6 +1,9 @@
 package lib
 
-import "flag"
+import (
+	"flag"
+	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
+)
 
 type Relayer interface {
 	Start() error
@@ -13,6 +16,11 @@ type RelayerClient interface {
 	Exit()
 	Send(r interface{}) error
 	Reload(*RelayerConfig)
+}
+
+type AsyncData struct {
+	Resp          *redis.Resp
+	ActualCommand string
 }
 
 type MainConfig struct {

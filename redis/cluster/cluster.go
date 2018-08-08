@@ -41,7 +41,7 @@ const (
 // errors
 var (
 	errBadCmd = errors.New("ERR bad command")
-	commands  map[string]*redis.Resp
+	commands  map[string]lib.AsyncData
 
 	respOK         = redis.NewRespSimple("OK")
 	respPong       = redis.NewRespSimple("PONG")
@@ -52,21 +52,22 @@ var (
 func init() {
 	// These are the commands that can be sent in "background" when in smart mode
 	// The values are the immediate responses to the clients
-	commands = map[string]*redis.Resp{
-		"SET":       respOK,
-		"SETEX":     respOK,
-		"PSETEX":    respOK,
-		"MSET":      respOK,
-		"HMSET":     respOK,
-		"SELECT":    respOK,
-		"HSET":      respTrue,
-		"SADD":      respTrue,
-		"ZADD":      respTrue,
-		"EXPIRE":    respTrue,
-		"EXPIREAT":  respTrue,
-		"PEXPIRE":   respTrue,
-		"PEXPIREAT": respTrue,
-		"PING":      respPong,
+	commands = map[string]lib.AsyncData{
+		"SET":       {Resp: respOK},
+		"SETEX":     {Resp: respOK},
+		"PSETEX":    {Resp: respOK},
+		"MSET":      {Resp: respOK},
+		"HMSET":     {Resp: respOK},
+		"SELECT":    {Resp: respOK},
+		"ASINCR":    {Resp: respOK, ActualCommand: "INCR"},
+		"HSET":      {Resp: respTrue},
+		"SADD":      {Resp: respTrue},
+		"ZADD":      {Resp: respTrue},
+		"EXPIRE":    {Resp: respTrue},
+		"EXPIREAT":  {Resp: respTrue},
+		"PEXPIRE":   {Resp: respTrue},
+		"PEXPIREAT": {Resp: respTrue},
+		"PING":      {Resp: respPong},
 	}
 }
 

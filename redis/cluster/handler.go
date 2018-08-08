@@ -63,13 +63,24 @@ func (h *connHandler) process(req *redis.Resp) {
 	}
 
 	doAsync := false
-	var fastResponse *redis.Resp
+	var fastResponse lib.AsyncData
 	if h.srv.mode == lib.ModeSmart {
 		fastResponse, doAsync = commands[cmd]
 	}
 
 	if doAsync {
-		fastResponse.WriteTo(h.conn)
+
+		if fastResponse.ActualCommand != "" && fastResponse.ActualCommand != cmd {
+			_, err := req.SetCommand(fastResponse.ActualCommand)
+
+			if err != nil {
+				// handle the error somehow?
+				return
+			}
+		}
+
+		fastResponse.Resp.WriteTo(h.conn)
+
 		if !h.initialized {
 			h.initialized = true
 			h.reqCh = make(chan reqData, requestBufferSize)

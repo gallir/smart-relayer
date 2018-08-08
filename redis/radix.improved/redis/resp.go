@@ -1184,3 +1184,16 @@ func getZipper(l int) (*gzip.Writer, error) {
 func putZipper(z *gzip.Writer) {
 	zippers.Put(z)
 }
+
+// SetCommand change the request command
+func (r *Resp) SetCommand(cmd string) (old string, err error) {
+	if a, ok := r.val.([]Resp); ok {
+		if a[0].IsType(Str) {
+			old, _ = a[0].Str()
+			a[0].val = []byte(cmd)
+			return
+		}
+	}
+	err = errBadType
+	return
+}
