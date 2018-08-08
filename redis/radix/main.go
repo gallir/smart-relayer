@@ -40,26 +40,26 @@ var (
 	respTrue       = redis.NewResp(1)
 	respBadCommand = redis.NewResp(errBadCmd)
 	respKO         = redis.NewResp(errKO)
-	commands       map[string]*redis.Resp
+	commands       map[string]lib.AsyncData
 )
 
 func init() {
 	// These are the commands that can be sent in "background" when in smart mode
 	// The values are the immediate responses to the clients
-	commands = map[string]*redis.Resp{
-		"SET":       respOK,
-		"SETEX":     respOK,
-		"PSETEX":    respOK,
-		"MSET":      respOK,
-		"HMSET":     respOK,
-		"SELECT":    respOK,
-		"HSET":      respTrue,
-		"SADD":      respTrue,
-		"ZADD":      respTrue,
-		"EXPIRE":    respTrue,
-		"EXPIREAT":  respTrue,
-		"PEXPIRE":   respTrue,
-		"PEXPIREAT": respTrue,
+	commands = map[string]lib.AsyncData{
+		"SET":       {Resp: respOK},
+		"SETEX":     {Resp: respOK},
+		"PSETEX":    {Resp: respOK},
+		"MSET":      {Resp: respOK},
+		"HMSET":     {Resp: respOK},
+		"SELECT":    {Resp: respOK},
+		"HSET":      {Resp: respTrue},
+		"SADD":      {Resp: respTrue},
+		"ZADD":      {Resp: respTrue},
+		"EXPIRE":    {Resp: respTrue},
+		"EXPIREAT":  {Resp: respTrue},
+		"PEXPIRE":   {Resp: respTrue},
+		"PEXPIREAT": {Resp: respTrue},
 	}
 }
 
@@ -179,7 +179,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		if srv.mode == lib.ModeSmart {
 			fastResponse, ok := commands[req.Command]
 			if ok {
-				fastResponse.WriteTo(netCon)
+				fastResponse.Resp.WriteTo(netCon)
 				client.send(req)
 				continue
 			}
