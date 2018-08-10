@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package redis2kvstore;
+
+message Hmset {
+    string Key = 1;
+    repeated Field Fields = 2;
+}
+
+message Field {
+    string Name = 1;
+    bytes Value = 2;
+}
