@@ -42,7 +42,7 @@ const (
 	errorsFrame         = 10 * time.Second
 	maxErrors           = 10 // Limit of errors to restart the connection
 	connectTimeout      = 15 * time.Second
-	defaultExpire       = string(8 * 60 * 60) // 8h
+	defaultExpire       = 8 * 60 * 60 // 8h
 )
 
 var (
@@ -214,7 +214,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				continue
 			}
 			key, _ := req.Items[1].Str()
-			expire, _ := req.Items[2].Str()
+			expire, err := req.Items[2].Int()
+			if err != nil {
+				expire = defaultExpire
+			}
 			if _, ok := pending[key]; ok {
 				go func(p *Hmset) {
 					defer putPoolHMSet(p)
@@ -258,11 +261,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	}
 }
 
-func (srv *Server) send(key, expire string, p *Hmset) {
+func (srv *Server) send(key string, expire int, p *Hmset) {
 	w := pool.Get()
 	defer pool.Put(w)
 
-	url := fmt.Sprintf("%s/%s/%ss", srv.config.URL, key, expire)
+	url := fmt.Sprintf("%s/%s/%ds", srv.config.URL, key, expire)
 	b, _ := p.Marshal()
 
 	if srv.config.Gzip > 0 {
@@ -276,6 +279,7 @@ func (srv *Server) send(key, expire string, p *Hmset) {
 		w.Write(b)
 	}
 	if w.Len() <= 0 {
+		log.Printf("redis2kvstore ERROR empty body: %s", url)
 		return
 	}
 
