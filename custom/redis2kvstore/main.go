@@ -215,14 +215,15 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			}
 			key, _ := req.Items[1].Str()
 			expire, err := req.Items[2].Int()
-			if err != nil {
-				expire = defaultExpire
-			}
 			if _, ok := pending[key]; ok {
-				go func(p *Hmset) {
+				go func(key string, expire int, p *Hmset) {
 					defer putPoolHMSet(p)
+					if expire == 0 || err != nil {
+						expire = defaultExpire
+					}
 					srv.send(key, expire, p)
-				}(pending[key])
+				}(key, expire, pending[key])
+
 				delete(pending, key)
 				validCommand.WriteTo(netCon)
 			}
