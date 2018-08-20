@@ -279,9 +279,6 @@ func (c *Cluster) getConn(key, addr string) (*redis.Client, error) {
 		p, ok := c.pools[addr]
 		if !ok {
 			if p, err = c.newPool(addr, false); err == nil {
-				if old, ok := c.pools[addr]; ok {
-					old.Empty()
-				}
 				c.pools[addr] = p
 			} else {
 				p = c.getRandomPoolInner()
