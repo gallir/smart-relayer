@@ -20,8 +20,8 @@ type Client struct {
 	mode               int
 	ready              int32
 	connected          int32
-	conn               net.Conn
-	buf                *lib.NetReadWriter
+	netConn            net.Conn
+	rw                 *lib.NetReadWriter
 	requestChan        chan *lib.Request // The relayer sends the requests via this channel
 	database           int               // The current selected database
 	queueChan          chan *lib.Request // Requests sent to the Redis server, some pending of responses
@@ -103,7 +103,7 @@ func (clt *Client) connect() bool {
 	conn, err := net.DialTimeout(clt.config.Scheme(), clt.config.Host(), connectTimeout)
 	if err != nil {
 		lib.Debugf("Failed to connect to %s", clt.config.Host())
-		clt.conn = nil
+		clt.netConn = nil
 		clt.lastConnectFailure = time.Now()
 		clt.failures++
 		return false
@@ -111,11 +111,11 @@ func (clt *Client) connect() bool {
 	clt.failures = 0
 	clt.connectedAt = time.Now()
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
-	clt.conn = conn
+	clt.netConn = conn
 	clt.queueChan = make(chan *lib.Request, requestBufferSize)
-	clt.buf = lib.NewSingleReadWriter(conn, time.Duration(clt.config.Timeout)*time.Second, 0)
+	clt.rw = lib.NewSingleReadWriter(conn, time.Duration(clt.config.Timeout)*time.Second, 0)
 
-	go clt.redisListener(clt.buf, clt.queueChan)
+	go clt.redisListener(clt.rw, clt.queueChan)
 	clt.setConnected(true)
 
 	return true
@@ -159,7 +159,7 @@ func (clt *Client) requestListener(ch chan *lib.Request) {
 			timer.Stop()
 			timer.Reset(maxIdle)
 		case <-timer.C:
-			if clt.conn != nil {
+			if clt.netConn != nil {
 				lib.Debugf("Closing by idle %s", clt.config.Host())
 				clt.disconnect()
 			}
@@ -247,7 +247,14 @@ func (clt *Client) write(r *lib.Request) (int64, error) {
 		}
 	}
 
-	c, err := resp.WriteTo(clt.buf)
+	c, err := resp.WriteTo(clt.rw)
+	if err == io.EOF {
+		log.Println("W: Closed connection at write():", clt.netConn.RemoteAddr(), "retrying")
+		// The other end has closed the connection, give it a second chance
+		clt.disconnect()
+		clt.connect()
+		c, err = resp.WriteTo(clt.rw)
+	}
 
 	if err != nil {
 		lib.Debugf("Failed in write: %s", err)
@@ -269,7 +276,7 @@ func (clt *Client) changeDB(db int) (err error) {
 		selectCommand,
 		fmt.Sprintf("%d", db),
 	})
-	_, err = changer.WriteTo(clt.buf)
+	_, err = changer.WriteTo(clt.rw)
 	if err != nil {
 		log.Println("Error changing database", err)
 		return
@@ -285,7 +292,7 @@ func (clt *Client) changeDB(db int) (err error) {
 
 func (clt *Client) flush(force bool) error {
 	if force || clt.config.Pipeline == 0 && clt.pipelined >= clt.config.Pipeline || len(clt.requestChan) == 0 {
-		err := clt.buf.Flush()
+		err := clt.rw.Flush()
 		clt.pipelined = 0
 		if err != nil {
 			lib.Debugf("Failed in flush: %s", err)
@@ -321,11 +328,11 @@ func (clt *Client) close() {
 	clt.Lock()
 	defer clt.Unlock()
 
-	if clt.conn != nil {
-		clt.buf.Flush()
+	if clt.netConn != nil {
+		clt.rw.Flush()
 		lib.Debugf("Closing connection")
-		clt.conn.Close()
-		clt.conn = nil
+		clt.netConn.Close()
+		clt.netConn = nil
 	}
 }
 
