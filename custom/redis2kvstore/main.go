@@ -226,6 +226,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			}
 
 			expire, _ := req.Items[2].Int()
+			p.Sent = true
 			go func(srv *Server, key string, expire int, p *Hmset) {
 				if expire == 0 {
 					expire = defaultExpire
@@ -320,7 +321,6 @@ func (srv *Server) send(key string, expire int, p *Hmset) {
 		if err == nil && resp.StatusCode == 200 {
 			// Success
 			defer resp.Body.Close()
-			p.Sent = true
 			return
 		}
 
