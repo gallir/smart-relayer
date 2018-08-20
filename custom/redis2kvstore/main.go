@@ -43,6 +43,7 @@ const (
 	maxErrors           = 10 // Limit of errors to restart the connection
 	connectTimeout      = 15 * time.Second
 	defaultExpire       = 8 * 60 * 60 // 8h
+	retryTime           = 100 * time.Millisecond
 )
 
 var (
@@ -51,7 +52,6 @@ var (
 	errOverloaded  = errors.New("http server overloaded")
 	errNotFound    = errors.New("Not found")
 	respOK         = redis.NewRespSimple("OK")
-	respTrue       = redis.NewResp(1)
 	respBadCommand = redis.NewResp(errBadCmd)
 	respKO         = redis.NewResp(errKO)
 	commands       map[string]*redis.Resp
@@ -163,7 +163,9 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	defer func() {
 		if len(pending) > 0 {
 			for key, p := range pending {
-				srv.send(key, defaultExpire, p)
+				if !p.Sent {
+					srv.send(key, defaultExpire, p)
+				}
 				putPoolHMSet(p)
 				delete(pending, key)
 			}
@@ -202,44 +204,58 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				respKO.WriteTo(netCon)
 				continue
 			}
+			validCommand.WriteTo(netCon)
+
 			key, _ := req.Items[1].Str()
 			if _, ok := pending[key]; !ok {
 				pending[key] = getPoolHMSet()
 			}
 			pending[key].processItems(req.Items[2:])
-			validCommand.WriteTo(netCon)
 		case "EXPIRE":
 			if len(req.Items) != 3 {
 				respKO.WriteTo(netCon)
 				continue
 			}
-			key, _ := req.Items[1].Str()
-			expire, err := req.Items[2].Int()
-			if _, ok := pending[key]; ok {
-				go func(key string, expire int, p *Hmset) {
-					defer putPoolHMSet(p)
-					if expire == 0 || err != nil {
-						expire = defaultExpire
-					}
-					srv.send(key, expire, p)
-				}(key, expire, pending[key])
 
-				delete(pending, key)
-				validCommand.WriteTo(netCon)
+			key, _ := req.Items[1].Str()
+			p, ok := pending[key]
+			if !ok || key == "" {
+				log.Printf("redis2kvstore ERROR: Invalid key %s", key)
+				respBadCommand.WriteTo(netCon)
+				continue
 			}
-			respBadCommand.WriteTo(netCon)
+
+			expire, _ := req.Items[2].Int()
+			go func(srv *Server, key string, expire int, p *Hmset) {
+				if expire == 0 {
+					expire = defaultExpire
+				}
+				srv.send(key, expire, p)
+			}(srv, key, expire, p)
+			validCommand.WriteTo(netCon)
 		case "HGETALL":
 			if len(req.Items) != 2 {
 				respKO.WriteTo(netCon)
 				continue
 			}
 			key, _ := req.Items[1].Str()
+
+			// Return information that is in memory
+			if m, ok := pending[key]; ok {
+				if r, err := m.getAllAsRedis(); err == nil {
+					r.WriteTo(netCon)
+					continue
+				}
+			}
+
+			// If is not in memory we go to the cluster
 			items, err := srv.getHGetAll(key)
 			if err != nil {
 				redis.NewResp(err).WriteTo(netCon)
 				continue
 			}
 			items.WriteTo(netCon)
+			items.ReleaseBuffers()
 		case "HGET":
 			if len(req.Items) != 3 {
 				respKO.WriteTo(netCon)
@@ -247,6 +263,16 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			}
 			key, _ := req.Items[1].Str()
 			item, _ := req.Items[2].Str()
+
+			// Return information that is in memory
+			if m, ok := pending[key]; ok {
+				if r, err := m.getOneAsRedis(item); err == nil {
+					r.WriteTo(netCon)
+					continue
+				}
+			}
+
+			// If is not in memory we go to the cluster
 			g, err := srv.getHGet(key, item)
 			if err != nil {
 				if err == errNotFound {
@@ -257,6 +283,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				continue
 			}
 			g.WriteTo(netCon)
+			g.ReleaseBuffers()
+		}
+
+		for _, i := range req.Items {
+			i.ReleaseBuffers()
 		}
 
 	}
@@ -284,16 +315,24 @@ func (srv *Server) send(key string, expire int, p *Hmset) {
 		return
 	}
 
-	resp, err := srv.client.Post(url, strContentType, bytes.NewReader(w.B))
-	if err != nil {
-		log.Printf("redis2kvstore ERROR connect: %s %s", url, err)
-		return
-	}
-	defer resp.Body.Close()
+	for i := 0; i < maxConnectionsTries; i++ {
+		resp, err := srv.client.Post(url, strContentType, bytes.NewReader(w.B))
+		if err == nil && resp.StatusCode == 200 {
+			// Success
+			defer resp.Body.Close()
+			p.Sent = true
+			return
+		}
 
-	if resp.StatusCode != 200 {
-		log.Printf("redis2kvstore ERROR post: [%d] %s %s", resp.StatusCode, url, err)
-		return
+		if err != nil {
+			log.Printf("redis2kvstore ERROR connect: %s %s", url, err)
+		}
+
+		if resp.StatusCode > 0 {
+			log.Printf("redis2kvstore ERROR post: [%d] %s %s", resp.StatusCode, url, err)
+		}
+
+		time.Sleep(retryTime)
 	}
 }
 
@@ -356,36 +395,33 @@ func (srv *Server) get(key string) (*Hmset, error) {
 }
 
 func (srv *Server) getHGetAll(key string) (*redis.Resp, error) {
-	m, err := srv.get(key)
-	if err != nil {
-		return nil, err
-	}
-	defer putPoolHMSet(m)
+	var m *Hmset
+	var err error
 
-	t := make(map[string][]byte, 0)
-	for _, f := range m.Fields {
-		t[f.Name] = f.Value
+	for i := 0; i < maxConnectionsTries; i++ {
+		m, err = srv.get(key)
+		if err == nil {
+			defer putPoolHMSet(m)
+			return m.getAllAsRedis()
+		}
+		time.Sleep(retryTime * 2)
 	}
 
-	r := redis.NewResp(t)
-	if r == nil {
-		return nil, errBadCmd
-	}
-	return r, nil
+	return nil, err
 }
 
 func (srv *Server) getHGet(key, field string) (*redis.Resp, error) {
-	m, err := srv.get(key)
-	if err != nil {
-		return nil, err
-	}
-	defer putPoolHMSet(m)
+	var m *Hmset
+	var err error
 
-	for _, f := range m.Fields {
-		if f.Name == field {
-			return redis.NewResp(f.Value), nil
+	for i := 0; i < maxConnectionsTries; i++ {
+		m, err = srv.get(key)
+		if err == nil {
+			defer putPoolHMSet(m)
+			return m.getOneAsRedis(field)
 		}
+		time.Sleep(retryTime * 2)
 	}
 
-	return nil, errNotFound
+	return nil, err
 }

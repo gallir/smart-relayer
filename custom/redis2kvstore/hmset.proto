@@ -5,6 +5,7 @@ package redis2kvstore;
 message Hmset {
     string Key = 1;
     repeated Field Fields = 2;
+    bool Sent = 3;
 }
 
 message Field {
