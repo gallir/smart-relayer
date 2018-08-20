@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -185,11 +187,16 @@ func (c *Cluster) startWithRetry() {
 			c.Unlock()
 			return
 		}
-		initialPool, err := c.newPool(c.o.Addr, true)
+		addr := getWithIP(c.o.Addr)
+		initialPool, err := c.newPool(addr, true)
 		if err == nil {
-			c.pools[c.o.Addr] = initialPool
+			if old, ok := c.pools[addr]; ok {
+				old.Empty()
+			}
+			c.pools[addr] = initialPool
 			break
 		}
+		initialPool.Empty() // Close all pending connections
 		if otherStarting {
 			// Avoid several goroutines waiting trying to start
 			c.Unlock()
@@ -272,6 +279,9 @@ func (c *Cluster) getConn(key, addr string) (*redis.Client, error) {
 		p, ok := c.pools[addr]
 		if !ok {
 			if p, err = c.newPool(addr, false); err == nil {
+				if old, ok := c.pools[addr]; ok {
+					old.Empty()
+				}
 				c.pools[addr] = p
 			} else {
 				p = c.getRandomPoolInner()
@@ -414,7 +424,9 @@ func (c *Cluster) resetInnerUsingPool(p clusterPool) error {
 		} else {
 			slotPool, err = c.newPool(slotAddr, true)
 			if err != nil {
-				return err
+				slotPool.Empty()
+				//return err
+				break
 			}
 			changed = true
 			pools[slotAddr] = slotPool
@@ -427,6 +439,9 @@ func (c *Cluster) resetInnerUsingPool(p clusterPool) error {
 			delete(c.poolThrottles, addr)
 			changed = true
 		}
+	}
+	if err != nil {
+		return err
 	}
 	c.pools = pools
 
@@ -753,4 +768,20 @@ func (c *Cluster) Close() {
 		}
 	}
 	close(c.stopCh)
+}
+
+func getWithIP(s string) string {
+	r := strings.Split(s, ":")
+	if len(r) == 0 || len(r[0]) == 0 {
+		return s
+	}
+	ips, err := net.LookupHost(r[0])
+	if err != nil {
+		return s
+	}
+	ip := ips[rand.Intn(len(ips))]
+	if len(r) > 1 {
+		ip = ip + ":" + r[1]
+	}
+	return ip
 }

@@ -38,6 +38,11 @@ func (cp clusterPool) Put(conn *redis.Client) {
 }
 
 func (cp clusterPool) Empty() {
-	close(cp.closeCh)
-	cp.Pool.Empty()
+	if cp.closeCh != nil {
+		close(cp.closeCh)
+	}
+
+	if cp.Pool != nil {
+		cp.Pool.Empty()
+	}
 }
