@@ -21,7 +21,7 @@ type Client struct {
 	ready              int32
 	connected          int32
 	conn               net.Conn
-	buf                *lib.NetBuffedReadWriter
+	buf                *lib.NetReadWriter
 	requestChan        chan *lib.Request // The relayer sends the requests via this channel
 	database           int               // The current selected database
 	queueChan          chan *lib.Request // Requests sent to the Redis server, some pending of responses
@@ -113,7 +113,7 @@ func (clt *Client) connect() bool {
 	lib.Debugf("Connected to %s", conn.RemoteAddr())
 	clt.conn = conn
 	clt.queueChan = make(chan *lib.Request, requestBufferSize)
-	clt.buf = lib.NewNetReadWriter(conn, time.Duration(clt.config.Timeout)*time.Second, 0)
+	clt.buf = lib.NewSingleReadWriter(conn, time.Duration(clt.config.Timeout)*time.Second, 0)
 
 	go clt.redisListener(clt.buf, clt.queueChan)
 	clt.setConnected(true)
