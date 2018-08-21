@@ -27,7 +27,7 @@ const (
 	requestBufferSize = 1024
 	listenTimeout     = 0 * time.Second // Don't timeout on local clients
 	connectTimeout    = 5 * time.Second
-	maxIdle           = 120 * time.Second
+	maxIdle           = 60 * time.Second
 	selectCommand     = "SELECT"
 	evalCommand       = "EVAL"
 )

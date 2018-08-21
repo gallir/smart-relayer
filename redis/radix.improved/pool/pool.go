@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -31,20 +32,12 @@ type DialFunc func(network, addr string) (*redis.Client, error)
 // used when creating new connections for the pool. The common use-case is to do
 // authentication for new connections.
 func NewCustom(network, addr string, size int, df DialFunc) (*Pool, error) {
+	if size < 1 {
+		return nil, errors.New("Wrong size")
+	}
+
 	var client *redis.Client
 	var err error
-	pool := make([]*redis.Client, 0, size)
-	for i := 0; i < size; i++ {
-		client, err = df(network, addr)
-		if err != nil {
-			for _, client = range pool {
-				client.Close()
-			}
-			pool = pool[:0]
-			break
-		}
-		pool = append(pool, client)
-	}
 	p := Pool{
 		Network: network,
 		Addr:    addr,
@@ -52,12 +45,11 @@ func NewCustom(network, addr string, size int, df DialFunc) (*Pool, error) {
 		df:      df,
 		stopCh:  make(chan bool),
 	}
-	for i := range pool {
-		p.pool <- pool[i]
-	}
 
-	if size < 1 {
-		return &p, err
+	// Create just one connection
+	client, err = df(network, addr)
+	if err == nil {
+		p.pool <- client
 	}
 
 	// set up a go-routine which will periodically ping connections in the pool.

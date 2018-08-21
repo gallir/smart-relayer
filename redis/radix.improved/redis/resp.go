@@ -312,6 +312,9 @@ func (r *Resp) WriteTo(w io.Writer) (int64, error) {
 		s := r.val.([]byte)
 		if UsePool > 0 && len(s) >= UsePool {
 			bb := bytebufferpool.Get()
+			defer func(b *bytebufferpool.ByteBuffer) {
+				bytebufferpool.Put(b)
+			}(bb)
 			bb.B = append(bb.B, simpleStrPrefix...)
 			bb.B = append(bb.B, s...)
 			bb.B = append(bb.B, delim...)
