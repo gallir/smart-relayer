@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"sync"
 	"time"
-
-	"net/http/httputil"
 
 	"github.com/gallir/bytebufferpool"
 	"github.com/gallir/smart-relayer/lib"
@@ -367,7 +366,7 @@ func (srv *Server) get(key string) (*Hmset, error) {
 		gzReader.Close()
 		lib.PutGzipReader(gzReader)
 	} else if srv.config.Compress {
-		b, err := httputil.DumpResponse(resp, true)
+		b, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			return nil, nil
 		}
@@ -377,7 +376,7 @@ func (srv *Server) get(key string) (*Hmset, error) {
 		}
 	} else {
 		var err error
-		buf.B, err = httputil.DumpResponse(resp, true)
+		buf.B, err = ioutil.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
