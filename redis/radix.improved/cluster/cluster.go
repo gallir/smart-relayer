@@ -421,7 +421,7 @@ func (c *Cluster) resetInnerUsingPool(p clusterPool) error {
 		}
 		if slotPool, ok = c.pools[slotAddr]; ok {
 			pools[slotAddr] = slotPool
-		} else {
+		} else if _, ok = pools[slotAddr]; !ok {
 			slotPool, err = c.newPool(slotAddr, true)
 			if err != nil {
 				slotPool.Empty()
