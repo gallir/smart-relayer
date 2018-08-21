@@ -53,14 +53,23 @@ func NewCustom(network, addr string, size int, df DialFunc) (*Pool, error) {
 	// set up a go-routine which will periodically ping connections in the pool.
 	// if the pool is idle every connection will be hit once every 10 seconds.
 	go func() {
-		tick := time.NewTicker(10 * time.Second / time.Duration(size))
-		defer tick.Stop()
 		for {
+			if len(p.pool) == 0 {
+				time.Sleep(time.Second)
+				continue
+			}
+			time.Sleep(10 * time.Second / time.Duration(len(p.pool)))
 			select {
 			case <-p.stopCh:
 				return
-			case <-tick.C:
-				p.Cmd("PING")
+			default:
+				c, err := p.Get()
+				if err == nil {
+					if time.Since(c.LastActivity) > 10*time.Second {
+						c.Cmd("PING")
+					}
+					p.Put(c)
+				}
 			}
 		}
 	}()

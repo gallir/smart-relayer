@@ -45,6 +45,8 @@ type Client struct {
 	// methods which deal with a command-then-response (e.g. Cmd, PipeResp) do
 	// set this and close the connection in the event of a timeout
 	LastCritical error
+
+	LastActivity time.Time
 }
 
 // request describes a client's request to the redis server
@@ -93,6 +95,7 @@ func (c *Client) Cmd(cmd string, args ...interface{}) *Resp {
 	if err != nil {
 		return NewRespIOErr(err)
 	}
+	c.LastActivity = time.Now()
 	return c.readResp(true)
 }
 
