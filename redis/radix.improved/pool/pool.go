@@ -2,7 +2,6 @@ package pool
 
 import (
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
@@ -16,8 +15,7 @@ type Pool struct {
 	pool chan *redis.Client
 	df   DialFunc
 
-	stopOnce sync.Once
-	stopCh   chan bool
+	stopCh chan bool
 
 	// The network/address that the pool is connecting to. These are going to be
 	// whatever was passed into the New function. These should not be
@@ -60,7 +58,6 @@ func NewCustom(network, addr string, size int, df DialFunc) (*Pool, error) {
 		for {
 			select {
 			case <-p.stopCh:
-				close(p.stopCh)
 				return
 			case <-tick.C:
 				p.Cmd("PING")
@@ -85,6 +82,8 @@ func (p *Pool) Get() (*redis.Client, error) {
 	select {
 	case conn := <-p.pool:
 		return conn, nil
+	case <-p.stopCh:
+		return nil, errors.New("pool emptied")
 	default:
 		return p.df(p.Network, p.Addr)
 	}
@@ -95,6 +94,14 @@ func (p *Pool) Get() (*redis.Client, error) {
 // what-have-you) it will not be put back in the pool
 func (p *Pool) Put(conn *redis.Client) {
 	if conn.LastCritical == nil {
+		// check to see if we've been shutdown and immediately close the connection
+		select {
+		case <-p.stopCh:
+			conn.Close()
+			return
+		default:
+		}
+
 		select {
 		case p.pool <- conn:
 		default:
@@ -119,10 +126,12 @@ func (p *Pool) Cmd(cmd string, args ...interface{}) *redis.Resp {
 // Assuming there are no other connections waiting to be Put back this method
 // effectively closes and cleans up the pool.
 func (p *Pool) Empty() {
-	p.stopOnce.Do(func() {
-		p.stopCh <- true
-		<-p.stopCh
-	})
+	// check to see if stopCh is already closed, and if not, close it
+	select {
+	case <-p.stopCh:
+	default:
+		close(p.stopCh)
+	}
 	var conn *redis.Client
 	for {
 		select {
