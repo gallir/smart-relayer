@@ -13,6 +13,7 @@ import (
 
 	"sync"
 
+	"github.com/gallir/smart-relayer/custom/redis2kvstore"
 	"github.com/gallir/smart-relayer/httpproxy"
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/cluster"
@@ -25,7 +26,7 @@ import (
 )
 
 const (
-	version = "8.6.2"
+	version = "8.7.0"
 )
 
 var (
@@ -54,6 +55,8 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 		srv, err = fs.New(conf, done)
 	case "http":
 		srv, err = httpproxy.New(conf, done)
+	case "redis2kvstore":
+		srv, err = redis2kvstore.New(conf, done)
 	default:
 		err = errors.New("no valid option")
 	}
