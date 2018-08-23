@@ -3,6 +3,7 @@ package redis2
 import (
 	"log"
 	"sync"
+	"time"
 
 	"github.com/gallir/smart-relayer/lib"
 )
@@ -12,11 +13,12 @@ type CreateFunction func(*lib.RelayerConfig) *Client
 // Pool keep a list of clients' elements
 type Pool struct {
 	sync.Mutex
-	config    lib.RelayerConfig
-	free      chan *Client
-	maxIdle   int
-	minIdle   int
-	monitorCh chan bool
+	config       lib.RelayerConfig
+	free         chan *Client
+	maxIdle      int
+	minIdle      int
+	maxConnected time.Duration
+	monitorCh    chan bool
 }
 
 // New returns a new pool manager
@@ -33,6 +35,7 @@ func (p *Pool) Reload(cfg *lib.RelayerConfig) {
 	p.Lock()
 	defer p.Unlock()
 
+	p.maxConnected = time.Duration(cfg.MaxConnectedSecs) * time.Second
 	p.minIdle = cfg.MinIdleConnections
 	maxIdle := cfg.MaxIdleConnections
 	if maxIdle == 0 {
@@ -70,11 +73,7 @@ func (p *Pool) Reload(cfg *lib.RelayerConfig) {
 func (p *Pool) monitor() {
 	for _ = range p.monitorCh {
 		if len(p.free) < p.minIdle {
-			c := NewClient(&p.config)
-			select {
-			case p.free <- c:
-			default:
-			}
+			p.free <- NewClient(&p.config)
 		}
 	}
 }
@@ -107,7 +106,7 @@ LOOP:
 	}
 
 	if c == nil {
-		lib.Debugf("Pool: created new client")
+		lib.Debugf("Pool: created new client in get")
 		c = NewClient(&p.config)
 	}
 
@@ -132,7 +131,18 @@ func (p *Pool) Put(c *Client) {
 		return
 	}
 
-	// Update the config before go back to the pool
+	if p.maxConnected > 0 && time.Since(c.connectedAt) > p.maxConnected {
+		lib.Debugf("Pool: exceeded connected duration %s", time.Since(c.connectedAt))
+		c.Exit()
+		// Check min idle connections
+		select {
+		case p.monitorCh <- true:
+		default:
+		}
+		return
+	}
+
+	// Update the config before send it back to the pool
 	if c.config != &p.config {
 		c.config = &p.config
 	}
