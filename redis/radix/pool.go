@@ -12,22 +12,28 @@ type CreateFunction func(*lib.RelayerConfig) *Client
 // Pool keep a list of clients' elements
 type Pool struct {
 	sync.Mutex
-	config  lib.RelayerConfig
-	free    chan *Client
-	maxIdle int
+	config    lib.RelayerConfig
+	free      chan *Client
+	maxIdle   int
+	minIdle   int
+	monitorCh chan bool
 }
 
 // New returns a new pool manager
 func NewPool(cfg *lib.RelayerConfig) (p *Pool) {
-	p = &Pool{}
-	p.ReadConfig(cfg)
+	p = &Pool{
+		monitorCh: make(chan bool, 1),
+	}
+	p.Reload(cfg)
+	go p.monitor()
 	return
 }
 
-func (p *Pool) ReadConfig(cfg *lib.RelayerConfig) {
+func (p *Pool) Reload(cfg *lib.RelayerConfig) {
 	p.Lock()
 	defer p.Unlock()
 
+	p.minIdle = cfg.MinIdleConnections
 	maxIdle := cfg.MaxIdleConnections
 	if maxIdle == 0 {
 		maxIdle = 1
@@ -61,10 +67,23 @@ func (p *Pool) ReadConfig(cfg *lib.RelayerConfig) {
 	p.config = *cfg
 }
 
+func (p *Pool) monitor() {
+	for _ = range p.monitorCh {
+		if len(p.free) < p.minIdle {
+			c := NewClient(&p.config)
+			select {
+			case p.free <- c:
+			default:
+			}
+		}
+	}
+}
+
 func (p *Pool) Reset() {
 	p.Lock()
 	defer p.Unlock()
 
+	close(p.monitorCh)
 	for c := range p.free {
 		c.Exit()
 	}
@@ -91,6 +110,13 @@ LOOP:
 		lib.Debugf("Pool: created new client")
 		c = NewClient(&p.config)
 	}
+
+	// Check min idle connections
+	select {
+	case p.monitorCh <- true:
+	default:
+	}
+
 	return
 }
 

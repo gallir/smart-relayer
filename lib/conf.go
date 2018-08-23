@@ -27,6 +27,8 @@ type RelayerConfig struct {
 	URL                string // Redis/SQS url endpoint
 	MaxConnections     int    // Pool management
 	MaxIdleConnections int    // Pool management
+	MinIdleConnections int    // Pool management
+	MaxLifecycleSecs   int    // Pool management
 	Compress           bool
 	Uncompress         bool
 	Gzip               int  // If > 0 is enabled and is the compression level

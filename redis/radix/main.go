@@ -128,7 +128,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 		srv.pool = NewPool(c)
 	} else {
 		log.Printf("Reload redis config at port %s for target %s", srv.config.Listen, srv.config.Host())
-		srv.pool.ReadConfig(c)
+		srv.pool.Reload(c)
 	}
 
 	return nil
