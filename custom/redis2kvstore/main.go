@@ -225,7 +225,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 			key, _ := req.Items[1].Str()
 			if _, ok := pending[key]; !ok {
-				// Here is when we start to process a new package
+				// Increase the number of running process before create a new hmset
 				atomic.AddInt64(&srv.running, 1)
 				pending[key] = getPoolHMSet()
 			}
@@ -316,6 +316,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 func (srv *Server) send(key string, expire int, p *Hmset) {
 	w := pool.Get()
 	defer pool.Put(w)
+	// Reduce the number of running sets
 	defer atomic.AddInt64(&srv.running, -1)
 
 	url := fmt.Sprintf("%s/%s/%ds", srv.config.URL, key, expire)
