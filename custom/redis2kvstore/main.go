@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gallir/bytebufferpool"
@@ -30,6 +31,7 @@ type Server struct {
 
 	lastConnection time.Time
 	lastError      time.Time
+	running        int64
 }
 
 const (
@@ -43,6 +45,7 @@ const (
 	connectTimeout      = 15 * time.Second
 	defaultExpire       = 8 * 60 * 60 // 8h
 	retryTime           = 100 * time.Millisecond
+	waitingForExit      = 2 * time.Second
 )
 
 var (
@@ -149,6 +152,21 @@ func (srv *Server) Exit() {
 		srv.listener.Close()
 	}
 
+	retry := 0
+	for retry < 10 {
+		n := atomic.LoadInt64(&srv.running)
+		if n == 0 {
+			break
+		}
+		log.Printf("redis2kvstore Waiting that %d process are still running", n)
+		time.Sleep(waitingForExit)
+		retry++
+	}
+
+	if n := atomic.LoadInt64(&srv.running); n > 0 {
+		log.Printf("redis2kvstore ERROR: %d messages lost", n)
+	}
+
 	// finishing the server
 	srv.done <- true
 }
@@ -207,6 +225,8 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 			key, _ := req.Items[1].Str()
 			if _, ok := pending[key]; !ok {
+				// Here is when we start to process a new package
+				atomic.AddInt64(&srv.running, 1)
 				pending[key] = getPoolHMSet()
 			}
 			pending[key].processItems(req.Items[2:])
@@ -296,6 +316,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 func (srv *Server) send(key string, expire int, p *Hmset) {
 	w := pool.Get()
 	defer pool.Put(w)
+	defer atomic.AddInt64(&srv.running, -1)
 
 	url := fmt.Sprintf("%s/%s/%ds", srv.config.URL, key, expire)
 	b, _ := p.Marshal()
