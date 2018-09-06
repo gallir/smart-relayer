@@ -43,7 +43,7 @@ const (
 	errorsFrame         = 10 * time.Second
 	maxErrors           = 10 // Limit of errors to restart the connection
 	connectTimeout      = 15 * time.Second
-	defaultExpire       = 8 * 60 * 60 // 8h
+	defaultExpire       = 2 * 60 * 60 // 2h
 	retryTime           = 100 * time.Millisecond
 	waitingForExit      = 2 * time.Second
 )
@@ -183,7 +183,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				if !p.Sent {
 					srv.send(key, defaultExpire, p)
 				}
-				putPoolHMSet(p)
 				delete(pending, key)
 			}
 		}
@@ -314,8 +313,13 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 }
 
 func (srv *Server) send(key string, expire int, p *Hmset) {
+	// Return Hmset to the pool
+	defer putPoolHMSet(p)
+
+	// Get bytes pool for the compression
 	w := pool.Get()
 	defer pool.Put(w)
+
 	// Reduce the number of running sets
 	defer atomic.AddInt64(&srv.running, -1)
 
@@ -339,10 +343,12 @@ func (srv *Server) send(key string, expire int, p *Hmset) {
 
 	for i := 0; i < maxConnectionsTries; i++ {
 		resp, err := srv.client.Post(url, strContentType, bytes.NewReader(w.B))
-		if err == nil && resp.StatusCode == 200 {
-			// Success
+		if err == nil {
 			defer resp.Body.Close()
-			return
+			if resp.StatusCode == 200 {
+				// Success
+				return
+			}
 		}
 
 		if err != nil {
