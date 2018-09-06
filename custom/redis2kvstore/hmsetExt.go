@@ -25,6 +25,7 @@ func putPoolHMSet(m *Hmset) {
 	for _, f := range m.Fields {
 		putPoolField(f)
 	}
+	m.Reset()
 	hmsetPool.Put(m)
 }
 
@@ -51,7 +52,6 @@ func (h *Hmset) processItems(items []*redis.Resp) {
 		i++
 		b, _ := items[i].Bytes()
 		f.Value = append(f.Value[:0], b...)
-
 		h.Fields = append(h.Fields, f)
 	}
 }
@@ -59,8 +59,7 @@ func (h *Hmset) processItems(items []*redis.Resp) {
 func (h *Hmset) getAllAsRedis() (*redis.Resp, error) {
 	t := make(map[string][]byte, 0)
 	for _, f := range h.Fields {
-		t[f.Name] = make([]byte, len(f.Value))
-		copy(t[f.Name], f.Value)
+		t[f.Name] = append(t[f.Name][:0], f.Value...)
 	}
 
 	r := redis.NewResp(t)
@@ -77,4 +76,18 @@ func (h *Hmset) getOneAsRedis(field string) (*redis.Resp, error) {
 		}
 	}
 	return nil, errNotFound
+}
+
+func (h *Hmset) clone() *Hmset {
+	nh := getPoolHMSet()
+	nh.Key = h.Key
+	nh.Sent = h.Sent
+
+	for _, f := range h.Fields {
+		nf := getPoolField()
+		nf.Name = f.Name
+		nf.Value = append(nf.Value[:0], f.Value...)
+		nh.Fields = append(nh.Fields, nf)
+	}
+	return nh
 }

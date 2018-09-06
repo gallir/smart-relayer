@@ -225,8 +225,6 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 			key, _ := req.Items[1].Str()
 			if _, ok := pending[key]; !ok {
-				// Increase the number of running process before create a new hmset
-				atomic.AddInt64(&srv.running, 1)
 				pending[key] = getPoolHMSet()
 			}
 			pending[key].processItems(req.Items[2:])
@@ -249,7 +247,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				expire = defaultExpire
 			}
 			p.Sent = true
-			go srv.send(key, expire, p)
+			go srv.send(key, expire, p.clone())
 			validCommand.WriteTo(netCon)
 		case "HGETALL":
 			if len(req.Items) != 2 {
@@ -318,11 +316,15 @@ func (srv *Server) send(key string, expire int, p *Hmset) {
 		}
 	}()
 
+	// Send back to the pool the Hmset
+	defer putPoolHMSet(p)
+
 	// Get bytes pool for the compression
 	w := pool.Get()
 	defer pool.Put(w)
 
-	// Reduce the number of running sets
+	// Increase the number of running process before create a new hmset
+	atomic.AddInt64(&srv.running, 1)
 	defer atomic.AddInt64(&srv.running, -1)
 
 	url := fmt.Sprintf("%s/%s/%ds", srv.config.URL, key, expire)
