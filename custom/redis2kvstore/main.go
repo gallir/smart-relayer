@@ -180,10 +180,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 	defer func() {
 		if len(pending) > 0 {
 			for key, p := range pending {
-				if !p.Sent {
+				if p != nil && !p.Sent && len(p.Fields) > 0 {
 					srv.send(key, defaultExpire, p)
 				}
 				delete(pending, key)
+				putPoolHMSet(p) // Return Hmset to the pool
 			}
 		}
 		putPending(pending)
@@ -244,13 +245,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			}
 
 			expire, _ := req.Items[2].Int()
+			if expire == 0 {
+				expire = defaultExpire
+			}
 			p.Sent = true
-			go func(srv *Server, key string, expire int, p *Hmset) {
-				if expire == 0 {
-					expire = defaultExpire
-				}
-				srv.send(key, expire, p)
-			}(srv, key, expire, p)
+			go srv.send(key, expire, p)
 			validCommand.WriteTo(netCon)
 		case "HGETALL":
 			if len(req.Items) != 2 {
@@ -313,8 +312,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 }
 
 func (srv *Server) send(key string, expire int, p *Hmset) {
-	// Return Hmset to the pool
-	defer putPoolHMSet(p)
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("redis2kvstore: Recovered in send [%s, %d] %s", key, len(p.Fields), r)
+		}
+	}()
 
 	// Get bytes pool for the compression
 	w := pool.Get()
@@ -396,11 +398,11 @@ func (srv *Server) get(key string) (*Hmset, error) {
 	} else if srv.config.Compress {
 		b, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			return nil, nil
+			return nil, err
 		}
 		buf.B, err = snappy.Decode(buf.B, b[len(redis.MarkerSnappy):])
 		if err != nil {
-			return nil, nil
+			return nil, err
 		}
 	} else {
 		var err error

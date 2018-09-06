@@ -16,8 +16,9 @@ func getPoolHMSet() *Hmset {
 	if m == nil {
 		return &Hmset{}
 	}
-	m.(*Hmset).Reset()
-	return m.(*Hmset)
+	h := m.(*Hmset)
+	h.Reset()
+	return h
 }
 
 func putPoolHMSet(m *Hmset) {
@@ -58,7 +59,8 @@ func (h *Hmset) processItems(items []*redis.Resp) {
 func (h *Hmset) getAllAsRedis() (*redis.Resp, error) {
 	t := make(map[string][]byte, 0)
 	for _, f := range h.Fields {
-		t[f.Name] = f.Value
+		t[f.Name] = make([]byte, len(f.Value))
+		copy(t[f.Name], f.Value)
 	}
 
 	r := redis.NewResp(t)
@@ -71,7 +73,7 @@ func (h *Hmset) getAllAsRedis() (*redis.Resp, error) {
 func (h *Hmset) getOneAsRedis(field string) (*redis.Resp, error) {
 	for _, f := range h.Fields {
 		if f.Name == field {
-			return redis.NewResp(f.Value), nil
+			return redis.NewResp(append([]byte{}, f.Value...)), nil
 		}
 	}
 	return nil, errNotFound
