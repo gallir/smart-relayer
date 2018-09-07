@@ -22,7 +22,13 @@ func getPoolHMSet() *Hmset {
 }
 
 func putPoolHMSet(m *Hmset) {
+	if m == nil {
+		return
+	}
 	for _, f := range m.Fields {
+		if f == nil {
+			continue
+		}
 		putPoolField(f)
 	}
 	m.Reset()
@@ -79,15 +85,18 @@ func (h *Hmset) getOneAsRedis(field string) (*redis.Resp, error) {
 }
 
 func (h *Hmset) clone() *Hmset {
-	nh := getPoolHMSet()
-	nh.Key = h.Key
-	nh.Sent = h.Sent
+	clonedH := getPoolHMSet()
+	clonedH.Key = h.Key
+	clonedH.Sent = h.Sent
 
-	for _, f := range h.Fields {
-		nf := getPoolField()
-		nf.Name = f.Name
-		nf.Value = append(nf.Value[:0], f.Value...)
-		nh.Fields = append(nh.Fields, nf)
+	for _, field := range h.Fields {
+		if field == nil {
+			continue
+		}
+		clonedField := getPoolField()
+		clonedField.Name = field.Name
+		clonedField.Value = append(clonedField.Value[:0], field.Value...)
+		clonedH.Fields = append(clonedH.Fields, clonedField)
 	}
-	return nh
+	return clonedH
 }

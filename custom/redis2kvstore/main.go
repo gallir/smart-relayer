@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -217,7 +218,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 		switch req.Command {
 		case "HMSET":
-			if len(req.Items) < 2 {
+			if len(req.Items) < 4 || len(req.Items)%2 != 0 {
 				respKO.WriteTo(netCon)
 				continue
 			}
@@ -310,11 +311,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 }
 
 func (srv *Server) send(key string, expire int, p *Hmset) {
-	defer func() {
+	defer func(lenFields int) {
 		if r := recover(); r != nil {
-			log.Printf("redis2kvstore: Recovered in send [%s, %d] %s", key, len(p.Fields), r)
+			log.Printf("redis2kvstore: Recovered in send [%s, %d] %s: %s\n", key, lenFields, r, debug.Stack())
 		}
-	}()
+	}(len(p.Fields))
 
 	// Send back to the pool the Hmset
 	defer putPoolHMSet(p)
@@ -353,16 +354,10 @@ func (srv *Server) send(key string, expire int, p *Hmset) {
 				// Success
 				return
 			}
-		}
-
-		if err != nil {
+			log.Printf("redis2kvstore ERROR post: [%d] %s %s", resp.StatusCode, url, err)
+		} else {
 			log.Printf("redis2kvstore ERROR connect: %s %s", url, err)
 		}
-
-		if resp.StatusCode > 0 {
-			log.Printf("redis2kvstore ERROR post: [%d] %s %s", resp.StatusCode, url, err)
-		}
-
 		time.Sleep(retryTime)
 	}
 }

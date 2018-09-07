@@ -1,8 +1,11 @@
 package redis2kvstore
 
 import (
+	"net/http"
 	"sync"
 	"testing"
+
+	"github.com/gallir/smart-relayer/lib"
 )
 
 func TestHMSETPool(t *testing.T) {
@@ -110,6 +113,36 @@ func TestEmptyFieldsMarshal1(t *testing.T) {
 	t.Logf("%s", string(b))
 }
 
+func TestServerSendWithZeroFields(t *testing.T) {
+	srv := &Server{}
+
+	h := getPoolHMSet()
+	defer putPoolHMSet(h)
+
+	srv.send("testing", 1200, h.clone())
+}
+
+func TestServerSendWithNilField(t *testing.T) {
+	srv := &Server{
+		client: &http.Client{},
+		config: lib.RelayerConfig{
+			URL: "http://localhost",
+		},
+	}
+
+	h := getPoolHMSet()
+	defer putPoolHMSet(h)
+
+	f1 := getPoolField()
+	h.Fields = append(h.Fields, f1)
+
+	f2 := getPoolField()
+	f2 = nil
+	h.Fields = append(h.Fields, f2)
+
+	srv.send("testing", 1200, h.clone())
+}
+
 func TestDoingMarshalWithSyncPoolAndManyGoRoutines(t *testing.T) {
 	wg := sync.WaitGroup{}
 	for c := 0; c < 2000000; c++ {
@@ -127,6 +160,7 @@ func TestDoingMarshalWithSyncPoolAndManyGoRoutines(t *testing.T) {
 			h.Fields = append(h.Fields, f1)
 
 			f2 := getPoolField()
+			f2 = nil
 			h.Fields = append(h.Fields, f2)
 
 			go func(hn *Hmset) {
