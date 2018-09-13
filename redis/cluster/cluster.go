@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"time"
 
@@ -19,12 +20,13 @@ import (
 // Server is the thread that listen for clients' connections
 type Server struct {
 	sync.Mutex
-	config   lib.RelayerConfig
-	mode     int
-	done     chan bool
-	exiting  bool
-	listener net.Listener
-	pool     util.Cmder
+	config       lib.RelayerConfig
+	mode         int
+	done         chan bool
+	exiting      bool
+	listener     net.Listener
+	pool         util.Cmder
+	asynCommands atomic.Value
 }
 
 type reqData struct {
@@ -96,6 +98,17 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	}
 	srv.config = *c // Save a copy
 	srv.mode = c.Type()
+
+	async := make(map[string]*redis.Resp)
+	for r, s := range commands {
+		async[r] = s
+	}
+	if srv.config.AsynCommands != "" {
+		for _, s := range strings.Split(srv.config.AsynCommands, " ") {
+			async[strings.ToUpper(s)] = respOK
+		}
+	}
+	srv.asynCommands.Store(async)
 
 	if srv.config.Protocol == "redis-cluster" {
 		return srv.reloadCluster(reset)

@@ -65,7 +65,9 @@ func (h *connHandler) process(req *redis.Resp) {
 	doAsync := false
 	var fastResponse *redis.Resp
 	if h.srv.mode == lib.ModeSmart {
-		fastResponse, doAsync = commands[cmd]
+		if async, ok := h.srv.asynCommands.Load().(map[string]*redis.Resp); ok {
+			fastResponse, doAsync = async[cmd]
+		}
 	}
 
 	if doAsync {
