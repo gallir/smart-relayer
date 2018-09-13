@@ -53,6 +53,8 @@ type RelayerConfig struct {
 	Shards          int // Shards for FS plugin
 	Writers         int // Writers BY shard (each shard will have the number of workers defined here)
 	BreakMultiplier int // Limit to declare as failing. Total writes plus this value
+
+	AsynCommands string
 }
 
 func ReadConfig(filename string) (config *Config, err error) {

@@ -4,7 +4,9 @@ import (
 	"errors"
 	"log"
 	"net"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gallir/smart-relayer/lib"
@@ -14,12 +16,13 @@ import (
 // Server is the thread that listen for clients' connections
 type Server struct {
 	sync.Mutex
-	config   lib.RelayerConfig
-	pool     *Pool
-	mode     int
-	done     chan bool
-	exiting  bool
-	listener net.Listener
+	config       lib.RelayerConfig
+	pool         *Pool
+	mode         int
+	done         chan bool
+	exiting      bool
+	listener     net.Listener
+	asynCommands atomic.Value
 }
 
 const (
@@ -110,8 +113,6 @@ func (srv *Server) Start() (e error) {
 // Reload the configuration
 func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	srv.Lock()
-	defer srv.Unlock()
-
 	reset := false
 	if srv.config.URL != c.URL {
 		reset = true
@@ -130,6 +131,16 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 		log.Printf("Reload redis config at port %s for target %s", srv.config.Listen, srv.config.Host())
 		srv.pool.Reload(c)
 	}
+
+	async := make(map[string]bool)
+	if srv.config.AsynCommands != "" {
+		for _, s := range strings.Split(srv.config.AsynCommands, " ") {
+			async[s] = true
+		}
+	}
+	srv.Unlock()
+
+	srv.asynCommands.Store(async)
 
 	return nil
 }
@@ -180,6 +191,15 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			fastResponse, ok := commands[req.Command]
 			if ok {
 				fastResponse.WriteTo(netCon)
+				client.send(req)
+				continue
+			}
+		}
+
+		// Commands that was defined as async in the configuration file
+		if async, ok := srv.asynCommands.Load().(map[string]bool); ok {
+			if _, ok := async[req.Command]; ok {
+				respOK.WriteTo(netCon)
 				client.send(req)
 				continue
 			}
