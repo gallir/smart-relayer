@@ -138,7 +138,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 	}
 	if srv.config.AsynCommands != "" {
 		for _, s := range strings.Split(srv.config.AsynCommands, " ") {
-			async[s] = respOK
+			async[strings.ToUpper(s)] = respOK
 		}
 	}
 	srv.Unlock()
