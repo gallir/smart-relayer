@@ -132,10 +132,13 @@ func (srv *Server) Reload(c *lib.RelayerConfig) error {
 		srv.pool.Reload(c)
 	}
 
-	async := make(map[string]bool)
+	async := make(map[string]*redis.Resp)
+	for r, s := range commands {
+		async[r] = s
+	}
 	if srv.config.AsynCommands != "" {
 		for _, s := range strings.Split(srv.config.AsynCommands, " ") {
-			async[s] = true
+			async[s] = respOK
 		}
 	}
 	srv.Unlock()
@@ -188,20 +191,13 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 		// Smart mode, answer immediately and forget
 		if srv.mode == lib.ModeSmart {
-			fastResponse, ok := commands[req.Command]
-			if ok {
-				fastResponse.WriteTo(netCon)
-				client.send(req)
-				continue
-			}
-		}
-
-		// Commands that was defined as async in the configuration file
-		if async, ok := srv.asynCommands.Load().(map[string]bool); ok {
-			if _, ok := async[req.Command]; ok {
-				respOK.WriteTo(netCon)
-				client.send(req)
-				continue
+			// Commands that was defined as async in the configuration file
+			if async, ok := srv.asynCommands.Load().(map[string]*redis.Resp); ok {
+				if fastResponse, ok := async[req.Command]; ok {
+					fastResponse.WriteTo(netCon)
+					client.send(req)
+					continue
+				}
 			}
 		}
 
