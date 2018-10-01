@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -349,7 +350,14 @@ func (srv *Server) send(key string, expire int, p *Hmset) {
 	for i := 0; i < maxConnectionsTries; i++ {
 		resp, err := srv.client.Post(url, strContentType, bytes.NewReader(w.B))
 		if err == nil {
+			// https://golang.org/pkg/net/http/#Response
+			// ... The default HTTP client's Transport may not
+			// reuse HTTP/1.x "keep-alive" TCP connections if the Body is
+			// not read to completion and closed.
 			defer resp.Body.Close()
+			if _, err = io.Copy(ioutil.Discard, resp.Body); err != nil {
+				log.Printf("redis2kvstore WARNING: %s %s", url, err)
+			}
 			if resp.StatusCode == 200 {
 				// Success
 				return
