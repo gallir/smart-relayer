@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/gallir/smart-relayer/custom/redis2kvstore"
+	"github.com/gallir/smart-relayer/httpTo/httpToAthena"
 	"github.com/gallir/smart-relayer/httpproxy"
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/cluster"
@@ -57,6 +58,8 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 		srv, err = httpproxy.New(conf, done)
 	case "redis2kvstore":
 		srv, err = redis2kvstore.New(conf, done)
+	case "httpToAthena":
+		srv, err = httpToAthena.New(conf, done)
 	default:
 		err = errors.New("no valid option")
 	}
