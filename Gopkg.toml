@@ -29,9 +29,13 @@ ignored = [
 	"github.com/BurntSushi/toml",
 	"github.com/pquerna/ffjson/*",
 	"github.com/golang/snappy",
+  "github.com/golang/protobuf/*",
+  "github.com/golang/protobuf",
 	"github.com/spaolacci/murmur3",
   "github.com/gallir/shortlivedpool",
-  "github.com/gallir/bytebufferpool"
+  "github.com/gallir/bytebufferpool",
+  "github.com/klauspost/compress/*",
+  "github.com/klauspost/compress"
 ]
 
 [[constraint]]

@@ -3,22 +3,29 @@
 
 [[projects]]
   branch = "master"
+  digest = "1:db42888bbb8ef5a5fff55753285c91d368c2e3c9e19b5daca59312b6c9eb52b6"
   name = "github.com/gabrielperezs/monad"
   packages = ["."]
+  pruneopts = "UT"
   revision = "55c1432f9185e4e45ba78282595baacd7f1aa3df"
 
 [[projects]]
   branch = "master"
+  digest = "1:998989afb65a4fa5d76eaaffae57f5479fd365c05bcb0f10b491f747388d20a8"
   name = "github.com/gabrielperezs/streamspooler"
   packages = [
     "firehose",
-    "kinesis"
+    "kinesis",
   ]
-  revision = "e92f9a952c70caa94e5819dedf391e1595bc6c9d"
+  pruneopts = "UT"
+  revision = "02a1e547fac2dc27d7c1d8eac3b7d59ff4e23ee9"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "bb5cc5f10975da8270c8d0dfa22a8606f6f177650292ed2baf7a62a808427b94"
+  input-imports = [
+    "github.com/gabrielperezs/streamspooler/firehose",
+    "github.com/gabrielperezs/streamspooler/kinesis",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1
