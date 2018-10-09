@@ -18,8 +18,11 @@ const (
 	maxRecordSize   = 1000 * 1024     // The maximum size of a record sent to Kinesis Firehose, before base64-encoding, is 1000 KB
 	maxBatchRecords = 500             // The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
 	maxBatchSize    = 4 * 1024 * 1024 // 4 MB per call
-	failureWait     = 1 * time.Second
-	failureMaxTries = 3
+
+	partialFailureWait = 200 * time.Millisecond
+	globalFailureWait  = 500 * time.Millisecond
+	onFlyRetryLimit    = 1024 * 2
+	firehoseError      = "InternalFailure"
 )
 
 var (
@@ -44,6 +47,7 @@ type Client struct {
 	ID          int64
 	t           *time.Timer
 	lastFlushed time.Time
+	onFlyRetry  int64
 }
 
 // NewClient creates a new client that connects to a Firehose
@@ -90,8 +94,6 @@ func (clt *Client) listen() {
 				continue
 			}
 
-			clt.count++
-
 			if clt.srv.cfg.Compress {
 				// All the message will be compress. This will work with raw and json messages.
 				r = compress.Bytes(r)
@@ -103,6 +105,8 @@ func (clt *Client) listen() {
 				log.Printf("Firehose client %s [%d]: ERROR: one record is over the limit %d/%d", clt.srv.cfg.StreamName, clt.ID, recordSize, maxRecordSize)
 				continue
 			}
+
+			clt.count++
 
 			// The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
 			if clt.count >= clt.srv.cfg.MaxRecords || len(clt.batch)+1 > maxBatchRecords || clt.batchSize+recordSize+1 >= maxBatchSize {
@@ -184,7 +188,7 @@ func (clt *Client) flush() {
 	}
 
 	// Create the request
-	req, _ := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
+	req, output := clt.srv.awsSvc.PutRecordBatchRequest(&firehose.PutRecordBatchInput{
 		DeliveryStreamName: aws.String(clt.srv.cfg.StreamName),
 		Records:            clt.records,
 	})
@@ -205,9 +209,49 @@ func (clt *Client) flush() {
 		}
 		clt.srv.failure()
 
-		// Finish if is not critical stream
-		if clt.srv.cfg.Critical {
-			log.Printf("Firehose client %s [%d]: ERROR Critical records lost, %d messages lost", clt.srv.cfg.StreamName, clt.ID, size)
+		// Sleep few millisecond because is a failure
+		time.Sleep(globalFailureWait)
+
+		// Send back to the buffer
+		for i := range clt.batch {
+			// The limit of retry elements will be applied just to non-critical messages
+			if !clt.srv.cfg.Critical && atomic.LoadInt64(&clt.onFlyRetry) > onFlyRetryLimit {
+				log.Printf("Firehose client %s [%d]: ERROR maximum of batch records retrying (%d): %s",
+					clt.srv.cfg.StreamName, clt.ID, onFlyRetryLimit, err)
+				continue
+			}
+			go func(b []byte) {
+				atomic.AddInt64(&clt.onFlyRetry, 1)
+				defer atomic.AddInt64(&clt.onFlyRetry, -1)
+				clt.srv.C <- b
+			}(append([]byte(nil), clt.batch[i].B...))
+		}
+	} else if *output.FailedPutCount > 0 {
+		log.Printf("Firehose client %s [%d]: partial failed, %d sent back to the buffer", clt.srv.cfg.StreamName, clt.ID, *output.FailedPutCount)
+		// Sleep few millisecond because the partial failure
+		time.Sleep(partialFailureWait)
+
+		for i, r := range output.RequestResponses {
+			if r.ErrorCode == nil && *r.ErrorCode != "" {
+				continue
+			}
+
+			// The limit of retry elements will be applied just to non-critical messages
+			if !clt.srv.cfg.Critical && atomic.LoadInt64(&clt.onFlyRetry) > onFlyRetryLimit {
+				log.Printf("Firehose client %s [%d]: ERROR maximum of batch records retrying %d, %s %s",
+					clt.srv.cfg.StreamName, clt.ID, onFlyRetryLimit, *r.ErrorCode, *r.ErrorMessage)
+				continue
+			}
+
+			if *r.ErrorCode == firehoseError {
+				log.Printf("Firehose client %s [%d]: ERROR in AWS: %s - %s", clt.srv.cfg.StreamName, clt.ID, *r.ErrorCode, *r.ErrorMessage)
+			}
+
+			go func(b []byte) {
+				atomic.AddInt64(&clt.onFlyRetry, 1)
+				defer atomic.AddInt64(&clt.onFlyRetry, -1)
+				clt.srv.C <- b
+			}(append([]byte(nil), clt.batch[i].B...))
 		}
 	}
 

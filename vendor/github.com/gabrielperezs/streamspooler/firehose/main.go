@@ -120,8 +120,6 @@ func (srv *Server) Reload(cfg *Config) (err error) {
 
 			currPtc := (l / float64(cap(srv.C))) * 100
 
-			//log.Printf("Debug: Queue %v, Chan %v%%/%v, Limit: %v%%", l, currPtc, cap(srv.C), srv.cfg.ThresholdWarmUp*100)
-
 			if currPtc > srv.cfg.ThresholdWarmUp*100 {
 				return true
 			}

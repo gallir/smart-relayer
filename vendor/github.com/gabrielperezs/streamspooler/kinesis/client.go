@@ -95,8 +95,6 @@ func (clt *Client) listen() {
 				continue
 			}
 
-			clt.count++
-
 			if clt.srv.cfg.Compress {
 				// All the message will be compress. This will work with raw and json messages.
 				r = compress.Bytes(r)
@@ -108,6 +106,8 @@ func (clt *Client) listen() {
 				log.Printf("Kinesis client %s [%d]: ERROR: one record is over the limit %d/%d", clt.srv.cfg.StreamName, clt.ID, recordSize, maxRecordSize)
 				continue
 			}
+
+			clt.count++
 
 			// The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
 			if clt.count >= clt.srv.cfg.MaxRecords || len(clt.batch)+1 > maxBatchRecords || clt.batchSize+recordSize+1 >= maxBatchSize {
@@ -210,7 +210,7 @@ func (clt *Client) flush() {
 		for i := range clt.batch {
 			go func(b []byte) {
 				clt.srv.C <- b
-			}(append([]byte(""), clt.batch[i].B...))
+			}(append([]byte(nil), clt.batch[i].B...))
 		}
 	} else if *output.FailedRecordCount > 0 {
 		log.Printf("Kinesis client %s [%d]: partial failed, %d sent back to the buffer", clt.srv.cfg.StreamName, clt.ID, *output.FailedRecordCount)
