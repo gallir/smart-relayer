@@ -80,7 +80,8 @@ func (srv *Server) Start() (e error) {
 		return nil
 	}
 
-	srv.engine = gin.Default()
+	gin.SetMode(gin.ReleaseMode)
+	srv.engine = gin.New()
 	srv.engine.POST("/:database", srv.query)
 	srv.engine.GET("/:jobId", srv.get)
 	go func() {
