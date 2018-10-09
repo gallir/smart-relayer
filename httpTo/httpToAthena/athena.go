@@ -2,7 +2,6 @@ package httpToAthena
 
 import (
 	"context"
-	"errors"
 	"io/ioutil"
 	"net/http"
 	"strings"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/gallir/smart-relayer/httpTo/httpToAthena/ifaceAthena"
 	"github.com/gallir/smart-relayer/lib"
-	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 	"github.com/gin-gonic/gin"
 )
 
@@ -29,15 +27,6 @@ type Server struct {
 }
 
 var (
-	errBadCmd      = errors.New("ERR bad command")
-	errKO          = errors.New("fatal error")
-	errOverloaded  = errors.New("Redis overloaded")
-	respOK         = redis.NewRespSimple("OK")
-	respTrue       = redis.NewResp(1)
-	respBadCommand = redis.NewResp(errBadCmd)
-	respKO         = redis.NewResp(errKO)
-	commands       map[string]*redis.Resp
-
 	defaultTimeout = 5 * time.Second
 )
 
