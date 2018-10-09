@@ -1,6 +1,7 @@
 package httpToAthena
 
 import (
+	"context"
 	"errors"
 	"io/ioutil"
 	"net/http"
@@ -36,6 +37,8 @@ var (
 	respBadCommand = redis.NewResp(errBadCmd)
 	respKO         = redis.NewResp(errKO)
 	commands       map[string]*redis.Resp
+
+	defaultTimeout = 5 * time.Second
 )
 
 // New creates a new Redis local server
@@ -126,15 +129,44 @@ func (srv *Server) query(ctx *gin.Context) {
 func (srv *Server) get(ctx *gin.Context) {
 	nextToken := ctx.GetHeader("X-NextToken")
 
-	r, nextToken, err := srv.iface.Read(ctx.Param("jobId"), nextToken)
-	if err != nil {
-		ctx.IndentedJSON(http.StatusBadRequest, map[string]interface{}{
-			"Error": err.Error(),
-		})
-		return
+	timeOut := defaultTimeout
+	if ctx.GetHeader("X-Timeout") != "" {
+		var err error
+		timeOut, err = time.ParseDuration(ctx.GetHeader("X-Timeout"))
+		if err != nil {
+			timeOut = defaultTimeout
+		}
 	}
-	ctx.IndentedJSON(http.StatusOK, map[string]interface{}{
-		"nextToken": nextToken,
-		"rows":      r,
-	})
+
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), timeOut)
+	defer cancel()
+
+	tick := time.NewTicker(1 * time.Second)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-tick.C:
+			r, nextToken, err := srv.iface.Read(ctx.Param("jobId"), nextToken)
+			if err != nil {
+				if err == ifaceAthena.ErrPending {
+					continue
+				}
+				ctx.IndentedJSON(http.StatusBadRequest, map[string]interface{}{
+					"Error": err.Error(),
+				})
+				return
+			}
+			ctx.IndentedJSON(http.StatusOK, map[string]interface{}{
+				"nextToken": nextToken,
+				"rows":      r,
+			})
+			return
+		case <-ctxTimeout.Done():
+			ctx.IndentedJSON(http.StatusCreated, map[string]interface{}{
+				"Error": ctxTimeout.Err().Error(),
+			})
+			return
+		}
+	}
 }

@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrInvalidResults = errors.New("Something goes really wrong, the results are not valid")
+	ErrPending        = errors.New("The query is pending")
 )
 
 type Config struct {
@@ -68,9 +69,20 @@ func (a *Athena) Query(database, querySQL string) (string, error) {
 
 func (a *Athena) Read(queryExecutionId string, nextToken string) ([]map[string]string, string, error) {
 
+	queryExec, err := a.awsSvc.GetQueryExecution(&athena.GetQueryExecutionInput{
+		QueryExecutionId: aws.String(queryExecutionId),
+	})
+	if err != nil {
+		return nil, "", err
+	}
+
+	if *queryExec.QueryExecution.Status.State != "SUCCEEDED" {
+		return nil, "", ErrPending
+	}
+
 	getInput := &athena.GetQueryResultsInput{
 		QueryExecutionId: aws.String(queryExecutionId),
-		MaxResults:       aws.Int64(10),
+		MaxResults:       aws.Int64(1000),
 		NextToken:        nil,
 	}
 
@@ -89,7 +101,7 @@ func (a *Athena) Read(queryExecutionId string, nextToken string) ([]map[string]s
 
 	colLen := len(results.ResultSet.ResultSetMetadata.ColumnInfo)
 
-	newLines := make([]map[string]string, 0, 100)
+	newLines := make([]map[string]string, 0, len(results.ResultSet.Rows))
 
 	for _, r := range results.ResultSet.Rows[1:] {
 		line := make(map[string]string, colLen)
