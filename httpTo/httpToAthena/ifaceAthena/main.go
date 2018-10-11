@@ -67,7 +67,7 @@ func (a *Athena) Query(database, querySQL string) (string, error) {
 	return *queryOutput.QueryExecutionId, nil
 }
 
-func (a *Athena) Read(queryExecutionId string, nextToken string) ([]map[string]string, string, error) {
+func (a *Athena) Read(queryExecutionId string, nextToken string, maxResults int64) ([]map[string]string, string, error) {
 
 	queryExec, err := a.awsSvc.GetQueryExecution(&athena.GetQueryExecutionInput{
 		QueryExecutionId: aws.String(queryExecutionId),
@@ -82,7 +82,7 @@ func (a *Athena) Read(queryExecutionId string, nextToken string) ([]map[string]s
 
 	getInput := &athena.GetQueryResultsInput{
 		QueryExecutionId: aws.String(queryExecutionId),
-		MaxResults:       aws.Int64(1000),
+		MaxResults:       aws.Int64(maxResults),
 		NextToken:        nil,
 	}
 
@@ -106,8 +106,15 @@ func (a *Athena) Read(queryExecutionId string, nextToken string) ([]map[string]s
 	for _, r := range results.ResultSet.Rows[1:] {
 		line := make(map[string]string, colLen)
 		for i, d := range r.Data {
+			if results.ResultSet.ResultSetMetadata.ColumnInfo[i].Name == nil {
+				continue
+			}
 			keyName := *results.ResultSet.ResultSetMetadata.ColumnInfo[i].Name
-			line[keyName] = *d.VarCharValue
+			if d.VarCharValue != nil {
+				line[keyName] = *d.VarCharValue
+			} else {
+				line[keyName] = ""
+			}
 		}
 		newLines = append(newLines, line)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +28,8 @@ type Server struct {
 }
 
 var (
-	defaultTimeout = 5 * time.Second
+	defaultTimeout          = 5 * time.Second
+	defaultMaxResults int64 = 100
 )
 
 // New creates a new Redis local server
@@ -119,13 +121,14 @@ func (srv *Server) query(ctx *gin.Context) {
 func (srv *Server) get(ctx *gin.Context) {
 	nextToken := ctx.GetHeader("X-NextToken")
 
-	timeOut := defaultTimeout
-	if ctx.GetHeader("X-Timeout") != "" {
-		var err error
-		timeOut, err = time.ParseDuration(ctx.GetHeader("X-Timeout"))
-		if err != nil {
-			timeOut = defaultTimeout
-		}
+	timeOut, err := time.ParseDuration(ctx.GetHeader("X-Timeout"))
+	if err != nil || timeOut == 0 {
+		timeOut = defaultTimeout
+	}
+
+	maxResults, err := strconv.ParseInt(ctx.GetHeader("X-MaxResults"), 10, 64)
+	if err != nil || maxResults == 0 {
+		maxResults = defaultMaxResults
 	}
 
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), timeOut)
@@ -137,7 +140,7 @@ func (srv *Server) get(ctx *gin.Context) {
 	for {
 		select {
 		case <-tick.C:
-			r, nextToken, err := srv.iface.Read(ctx.Param("jobId"), nextToken)
+			r, nextToken, err := srv.iface.Read(ctx.Param("jobId"), nextToken, maxResults)
 			if err != nil {
 				if err == ifaceAthena.ErrPending {
 					continue
