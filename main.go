@@ -101,6 +101,7 @@ func startOrReload() bool {
 			r, err := getNewServer(conf)
 			if err != nil {
 				log.Println("E: Error starting relayer", conf.Protocol, conf.URL, err)
+				continue
 			}
 			lib.Debugf("Starting new relayer from %s to %s", conf.Listen, conf.URL)
 			totalRelayers++
