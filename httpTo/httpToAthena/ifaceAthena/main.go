@@ -102,6 +102,9 @@ func (a *Athena) Read(queryExecutionId string, nextToken string, maxResults int6
 	colLen := len(results.ResultSet.ResultSetMetadata.ColumnInfo)
 
 	newLines := make([]map[string]string, 0, len(results.ResultSet.Rows))
+	if len(results.ResultSet.Rows) == 0 {
+		return newLines, "", nil
+	}
 
 	for _, r := range results.ResultSet.Rows[1:] {
 		line := make(map[string]string, colLen)
