@@ -95,6 +95,7 @@ func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
 		MaxRecords:    srv.config.MaxRecords,
 		Buffer:        srv.config.Buffer,
 		ConcatRecords: srv.config.Concat,
+		Critical:      srv.config.Critical,
 	}
 
 	if srv.ks == nil {
@@ -162,10 +163,16 @@ func (srv *Server) sendRecord(r *lib.InterRecord) {
 		return
 	}
 
+	// It blocks until the message can be delivered, for critical logs
+	if srv.config.Critical || srv.config.Mode != "smart" {
+		srv.ks.C <- r.Bytes()
+		return
+	}
+
 	select {
 	case srv.ks.C <- r.Bytes():
 	default:
-		lib.Debugf("Firehose: channel is full. Queued messages %d", len(srv.ks.C))
+		log.Printf("Kinesis: channel is full. Queued messages %d", len(srv.ks.C))
 	}
 }
 
