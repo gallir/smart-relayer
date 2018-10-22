@@ -232,7 +232,7 @@ func (clt *Client) flush() {
 		time.Sleep(partialFailureWait)
 
 		for i, r := range output.RequestResponses {
-			if r.ErrorCode == nil && *r.ErrorCode != "" {
+			if r == nil || r.ErrorCode == nil {
 				continue
 			}
 
