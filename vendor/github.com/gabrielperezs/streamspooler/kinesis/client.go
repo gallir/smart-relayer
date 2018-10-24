@@ -102,7 +102,7 @@ func (clt *Client) listen() {
 				recordSize = len(r)
 			}
 
-			if recordSize+1 >= maxRecordSize {
+			if recordSize > maxRecordSize {
 				log.Printf("Kinesis client %s [%d]: ERROR: one record is over the limit %d/%d", clt.srv.cfg.StreamName, clt.ID, recordSize, maxRecordSize)
 				continue
 			}

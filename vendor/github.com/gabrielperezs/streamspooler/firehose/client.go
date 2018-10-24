@@ -101,7 +101,7 @@ func (clt *Client) listen() {
 				recordSize = len(r)
 			}
 
-			if recordSize >= maxRecordSize {
+			if recordSize > maxRecordSize {
 				log.Printf("Firehose client %s [%d]: ERROR: one record is over the limit %d/%d", clt.srv.cfg.StreamName, clt.ID, recordSize, maxRecordSize)
 				continue
 			}
@@ -109,7 +109,7 @@ func (clt *Client) listen() {
 			clt.count++
 
 			// The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
-			if clt.count >= clt.srv.cfg.MaxRecords || len(clt.batch)+1 > maxBatchRecords || clt.batchSize+recordSize >= maxBatchSize {
+			if clt.count >= clt.srv.cfg.MaxRecords || len(clt.batch)+1 > maxBatchRecords || clt.batchSize+recordSize+1 >= maxBatchSize {
 				// log.Printf("flush: count %d/%d | batch %d/%d | size [%d] %d/%d",
 				// 	clt.count, clt.srv.cfg.MaxRecords, len(clt.batch), maxBatchRecords, recordSize, (clt.batchSize+recordSize+1)/1024, maxBatchSize/1024)
 				// Force flush
