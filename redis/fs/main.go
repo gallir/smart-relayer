@@ -391,15 +391,18 @@ func (srv *Server) set(netCon net.Conn, items []*redis.Resp) (err error) {
 		if err = msg.storeTmp(); err != nil {
 			return err
 		}
+		if err = msg.sentToShard(); err != nil {
+			return err
+		}
+		redis.NewResp(r).WriteTo(netCon)
+		return nil
 	}
 
 	// Send response to the client
 	redis.NewResp(r).WriteTo(netCon)
 
-	if srv.config.Mode != "sync" {
-		if err = msg.storeTmp(); err != nil {
-			return err
-		}
+	if err = msg.storeTmp(); err != nil {
+		return err
 	}
 
 	go msg.sentToShard()
