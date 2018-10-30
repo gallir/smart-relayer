@@ -9,7 +9,6 @@
 [![Join the chat at https://gitter.im/gin-gonic/gin](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/gin-gonic/gin?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 [![Sourcegraph](https://sourcegraph.com/github.com/gin-gonic/gin/-/badge.svg)](https://sourcegraph.com/github.com/gin-gonic/gin?badge)
 [![Open Source Helpers](https://www.codetriage.com/gin-gonic/gin/badges/users.svg)](https://www.codetriage.com/gin-gonic/gin)
-[![Release](https://img.shields.io/github/release/gin-gonic/gin.svg?style=flat-square)](https://github.com/gin-gonic/gin/releases)
 
 Gin is a web framework written in Go (Golang). It features a martini-like API with much better performance, up to 40 times faster thanks to [httprouter](https://github.com/julienschmidt/httprouter). If you need performance and good productivity, you will love Gin.
 
@@ -41,7 +40,7 @@ Gin is a web framework written in Go (Golang). It features a martini-like API wi
     - [Bind Query String or Post Data](#bind-query-string-or-post-data)
     - [Bind HTML checkboxes](#bind-html-checkboxes)
     - [Multipart/Urlencoded binding](#multiparturlencoded-binding)
-    - [XML, JSON, YAML and ProtoBuf rendering](#xml-json-yaml-and-protobuf-rendering)
+    - [XML, JSON and YAML rendering](#xml-json-and-yaml-rendering)
     - [JSONP rendering](#jsonp)
     - [Serving static files](#serving-static-files)
     - [Serving data from reader](#serving-data-from-reader)
@@ -59,9 +58,8 @@ Gin is a web framework written in Go (Golang). It features a martini-like API wi
     - [Bind form-data request with custom struct](#bind-form-data-request-with-custom-struct)
     - [Try to bind body into different structs](#try-to-bind-body-into-different-structs)
     - [http2 server push](#http2-server-push)
-    - [Define format for the log of routes](#define-format-for-the-log-of-routes)
 - [Testing](#testing)
-- [Users](#users)
+- [Users](#users--)
 
 ## Installation
 
@@ -102,7 +100,7 @@ $ mkdir -p $GOPATH/src/github.com/myusername/project && cd "$_"
 
 ```sh
 $ govendor init
-$ govendor fetch github.com/gin-gonic/gin@v1.3
+$ govendor fetch github.com/gin-gonic/gin@v1.2
 ```
 
 4. Copy a starting template inside your project
@@ -200,7 +198,7 @@ BenchmarkVulcan_GithubAll                   |    5000    |   394253    |   19894
 
 ## Build with [jsoniter](https://github.com/json-iterator/go)
 
-Gin uses `encoding/json` as default json package but you can change to [jsoniter](https://github.com/json-iterator/go) by build from other tags.
+Gin use `encoding/json` as default json package but you can change to [jsoniter](https://github.com/json-iterator/go) by build from other tags.
 
 ```sh
 $ go build -tags=jsoniter .
@@ -536,10 +534,10 @@ Note that you need to set the corresponding binding tag on all fields you want t
 
 Also, Gin provides two sets of methods for binding:
 - **Type** - Must bind
-  - **Methods** - `Bind`, `BindJSON`, `BindXML`, `BindQuery`
+  - **Methods** - `Bind`, `BindJSON`, `BindQuery`
   - **Behavior** - These methods use `MustBindWith` under the hood. If there is a binding error, the request is aborted with `c.AbortWithError(400, err).SetType(ErrorTypeBind)`. This sets the response status code to 400 and the `Content-Type` header is set to `text/plain; charset=utf-8`. Note that if you try to set the response code after this, it will result in a warning `[GIN-debug] [WARNING] Headers were already written. Wanted to override status code 400 with 422`. If you wish to have greater control over the behavior, consider using the `ShouldBind` equivalent method.
 - **Type** - Should bind
-  - **Methods** - `ShouldBind`, `ShouldBindJSON`, `ShouldBindXML`, `ShouldBindQuery`
+  - **Methods** - `ShouldBind`, `ShouldBindJSON`, `ShouldBindQuery`
   - **Behavior** - These methods use `ShouldBindWith` under the hood. If there is a binding error, the error is returned and it is the developer's responsibility to handle the request and error appropriately.
 
 When using the Bind-method, Gin tries to infer the binder depending on the Content-Type header. If you are sure what you are binding, you can use `MustBindWith` or `ShouldBindWith`.
@@ -549,8 +547,8 @@ You can also specify that specific fields are required. If a field is decorated 
 ```go
 // Binding from JSON
 type Login struct {
-	User     string `form:"user" json:"user" xml:"user"  binding:"required"`
-	Password string `form:"password" json:"password" xml:"password" binding:"required"`
+	User     string `form:"user" json:"user" binding:"required"`
+	Password string `form:"password" json:"password" binding:"required"`
 }
 
 func main() {
@@ -559,55 +557,30 @@ func main() {
 	// Example for binding JSON ({"user": "manu", "password": "123"})
 	router.POST("/loginJSON", func(c *gin.Context) {
 		var json Login
-		if err := c.ShouldBindJSON(&json); err != nil {
+		if err := c.ShouldBindJSON(&json); err == nil {
+			if json.User == "manu" && json.Password == "123" {
+				c.JSON(http.StatusOK, gin.H{"status": "you are logged in"})
+			} else {
+				c.JSON(http.StatusUnauthorized, gin.H{"status": "unauthorized"})
+			}
+		} else {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
 		}
-		
-		if json.User != "manu" || json.Password != "123" {
-			c.JSON(http.StatusUnauthorized, gin.H{"status": "unauthorized"})
-			return
-		} 
-		
-		c.JSON(http.StatusOK, gin.H{"status": "you are logged in"})
-	})
-
-	// Example for binding XML (
-	//	<?xml version="1.0" encoding="UTF-8"?>
-	//	<root>
-	//		<user>user</user>
-	//		<password>123</user>
-	//	</root>)
-	router.POST("/loginXML", func(c *gin.Context) {
-		var xml Login
-		if err := c.ShouldBindXML(&xml); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		
-		if xml.User != "manu" || xml.Password != "123" {
-			c.JSON(http.StatusUnauthorized, gin.H{"status": "unauthorized"})
-			return
-		} 
-		
-		c.JSON(http.StatusOK, gin.H{"status": "you are logged in"})
 	})
 
 	// Example for binding a HTML form (user=manu&password=123)
 	router.POST("/loginForm", func(c *gin.Context) {
 		var form Login
 		// This will infer what binder to use depending on the content-type header.
-		if err := c.ShouldBind(&form); err != nil {
+		if err := c.ShouldBind(&form); err == nil {
+			if form.User == "manu" && form.Password == "123" {
+				c.JSON(http.StatusOK, gin.H{"status": "you are logged in"})
+			} else {
+				c.JSON(http.StatusUnauthorized, gin.H{"status": "unauthorized"})
+			}
+		} else {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
 		}
-		
-		if form.User != "manu" || form.Password != "123" {
-			c.JSON(http.StatusUnauthorized, gin.H{"status": "unauthorized"})
-			return
-		} 
-		
-		c.JSON(http.StatusOK, gin.H{"status": "you are logged in"})
 	})
 
 	// Listen and serve on 0.0.0.0:8080
@@ -659,7 +632,6 @@ import (
 	"gopkg.in/go-playground/validator.v8"
 )
 
-// Booking contains binded and validated data.
 type Booking struct {
 	CheckIn  time.Time `form:"check_in" binding:"required,bookabledate" time_format:"2006-01-02"`
 	CheckOut time.Time `form:"check_out" binding:"required,gtfield=CheckIn" time_format:"2006-01-02"`
@@ -707,7 +679,7 @@ $ curl "localhost:8085/bookable?check_in=2018-03-08&check_out=2018-03-09"
 {"error":"Key: 'Booking.CheckIn' Error:Field validation for 'CheckIn' failed on the 'bookabledate' tag"}
 ```
 
-[Struct level validations](https://github.com/go-playground/validator/releases/tag/v8.7) can also be registered this way.
+[Struct level validations](https://github.com/go-playground/validator/releases/tag/v8.7) can also be registed this way.
 See the [struct-lvl-validation example](examples/struct-lvl-validations) to learn more.
 
 ### Only Bind Query String
@@ -753,12 +725,9 @@ See the [detail information](https://github.com/gin-gonic/gin/issues/742#issueco
 ```go
 package main
 
-import (
-	"log"
-	"time"
-
-	"github.com/gin-gonic/gin"
-)
+import "log"
+import "github.com/gin-gonic/gin"
+import "time"
 
 type Person struct {
 	Name     string    `form:"name"`
@@ -877,7 +846,7 @@ Test it with:
 $ curl -v --form user=user --form password=password http://localhost:8080/login
 ```
 
-### XML, JSON, YAML and ProtoBuf rendering
+### XML, JSON and YAML rendering
 
 ```go
 func main() {
@@ -909,19 +878,6 @@ func main() {
 
 	r.GET("/someYAML", func(c *gin.Context) {
 		c.YAML(http.StatusOK, gin.H{"message": "hey", "status": http.StatusOK})
-	})
-
-	r.GET("/someProtoBuf", func(c *gin.Context) {
-		reps := []int64{int64(1), int64(2)}
-		label := "test"
-		// The specific definition of protobuf is written in the testdata/protoexample file.
-		data := &protoexample.Test{
-			Label: &label,
-			Reps:  reps,
-		}
-		// Note that data becomes binary data in the response
-		// Will output protoexample.Test protobuf serialized data
-		c.ProtoBuf(http.StatusOK, data)
 	})
 
 	// Listen and serve on 0.0.0.0:8080
@@ -994,34 +950,6 @@ func main() {
 
 	// Listen and serve on 0.0.0.0:8080
 	r.Run(":8080")
-}
-```
-
-#### PureJSON
-
-Normally, JSON replaces special HTML characters with their unicode entities, e.g. `<` becomes  `\u003c`. If you want to encode such characters literally, you can use PureJSON instead.
-This feature is unavailable in Go 1.6 and lower.
-
-```go
-func main() {
-	r := gin.Default()
-	
-	// Serves unicode entities
-	r.GET("/json", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"html": "<b>Hello, world!</b>",
-		})
-	})
-	
-	// Serves literal characters
-	r.GET("/purejson", func(c *gin.Context) {
-		c.PureJSON(200, gin.H{
-			"html": "<b>Hello, world!</b>",
-		})
-	})
-	
-	// listen and serve on 0.0.0.0:8080
-	r.Run(":8080)
 }
 ```
 
@@ -1721,11 +1649,11 @@ type StructX struct {
 }
 
 type StructY struct {
-    Y StructX `form:"name_y"` // HERE have form
+    Y StructX `form:"name_y"` // HERE hava form
 }
 
 type StructZ struct {
-    Z *StructZ `form:"name_z"` // HERE have form
+    Z *StructZ `form:"name_z"` // HERE hava form
 }
 ```
 
@@ -1838,49 +1766,6 @@ func main() {
 }
 ```
 
-### Define format for the log of routes
-
-The default log of routes is:
-```
-[GIN-debug] POST   /foo                      --> main.main.func1 (3 handlers)
-[GIN-debug] GET    /bar                      --> main.main.func2 (3 handlers)
-[GIN-debug] GET    /status                   --> main.main.func3 (3 handlers)
-```
-
-If you want to log this information in given format (e.g. JSON, key values or something else), then you can define this format with `gin.DebugPrintRouteFunc`.
-In the example below, we log all routes with standard log package but you can use another log tools that suits of your needs.
-```go
-import (
-	"log"
-	"net/http"
-
-	"github.com/gin-gonic/gin"
-)
-
-func main() {
-	r := gin.Default()
-	gin.DebugPrintRouteFunc = func(httpMethod, absolutePath, handlerName string, nuHandlers int) {
-		log.Printf("endpoint %v %v %v %v\n", httpMethod, absolutePath, handlerName, nuHandlers)
-	}
-
-	r.POST("/foo", func(c *gin.Context) {
-		c.JSON(http.StatusOK, "foo")
-	})
-
-	r.GET("/bar", func(c *gin.Context) {
-		c.JSON(http.StatusOK, "bar")
-	})
-
-	r.GET("/status", func(c *gin.Context) {
-		c.JSON(http.StatusOK, "ok")
-	})
-
-	// Listen and Server in http://0.0.0.0:8080
-	r.Run()
-}
-```
-
-
 ## Testing
 
 The `net/http/httptest` package is preferable way for HTTP testing.
@@ -1931,6 +1816,5 @@ func TestPingRoute(t *testing.T) {
 
 Awesome project lists using [Gin](https://github.com/gin-gonic/gin) web framework.
 
-* [drone](https://github.com/drone/drone): Drone is a Continuous Delivery platform built on Docker, written in Go.
+* [drone](https://github.com/drone/drone): Drone is a Continuous Delivery platform built on Docker, written in Go
 * [gorush](https://github.com/appleboy/gorush): A push notification server written in Go.
-* [fnproject](https://github.com/fnproject/fn): The container native, cloud agnostic serverless platform.

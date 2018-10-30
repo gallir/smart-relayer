@@ -511,11 +511,6 @@ func (c *Context) BindJSON(obj interface{}) error {
 	return c.MustBindWith(obj, binding.JSON)
 }
 
-// BindXML is a shortcut for c.MustBindWith(obj, binding.BindXML).
-func (c *Context) BindXML(obj interface{}) error {
-	return c.MustBindWith(obj, binding.XML)
-}
-
 // BindQuery is a shortcut for c.MustBindWith(obj, binding.Query).
 func (c *Context) BindQuery(obj interface{}) error {
 	return c.MustBindWith(obj, binding.Query)
@@ -548,11 +543,6 @@ func (c *Context) ShouldBind(obj interface{}) error {
 // ShouldBindJSON is a shortcut for c.ShouldBindWith(obj, binding.JSON).
 func (c *Context) ShouldBindJSON(obj interface{}) error {
 	return c.ShouldBindWith(obj, binding.JSON)
-}
-
-// ShouldBindXML is a shortcut for c.ShouldBindWith(obj, binding.XML).
-func (c *Context) ShouldBindXML(obj interface{}) error {
-	return c.ShouldBindWith(obj, binding.XML)
 }
 
 // ShouldBindQuery is a shortcut for c.ShouldBindWith(obj, binding.Query).
@@ -665,9 +655,9 @@ func (c *Context) Status(code int) {
 func (c *Context) Header(key, value string) {
 	if value == "" {
 		c.Writer.Header().Del(key)
-		return
+	} else {
+		c.Writer.Header().Set(key, value)
 	}
-	c.Writer.Header().Set(key, value)
 }
 
 // GetHeader returns value from request headers.
@@ -711,7 +701,6 @@ func (c *Context) Cookie(name string) (string, error) {
 	return val, nil
 }
 
-// Render writes the response headers and calls render.Render to render data.
 func (c *Context) Render(code int, r render.Render) {
 	c.Status(code)
 
@@ -756,9 +745,9 @@ func (c *Context) JSONP(code int, obj interface{}) {
 	callback := c.DefaultQuery("callback", "")
 	if callback == "" {
 		c.Render(code, render.JSON{Data: obj})
-		return
+	} else {
+		c.Render(code, render.JsonpJSON{Callback: callback, Data: obj})
 	}
-	c.Render(code, render.JsonpJSON{Callback: callback, Data: obj})
 }
 
 // JSON serializes the given struct as JSON into the response body.
@@ -782,11 +771,6 @@ func (c *Context) XML(code int, obj interface{}) {
 // YAML serializes the given struct as YAML into the response body.
 func (c *Context) YAML(code int, obj interface{}) {
 	c.Render(code, render.YAML{Data: obj})
-}
-
-// ProtoBuf serializes the given struct as ProtoBuf into the response body.
-func (c *Context) ProtoBuf(code int, obj interface{}) {
-	c.Render(code, render.ProtoBuf{Data: obj})
 }
 
 // String writes the given string into the response body.
@@ -834,7 +818,6 @@ func (c *Context) SSEvent(name string, message interface{}) {
 	})
 }
 
-// Stream sends a streaming response.
 func (c *Context) Stream(step func(w io.Writer) bool) {
 	w := c.Writer
 	clientGone := w.CloseNotify()
@@ -856,7 +839,6 @@ func (c *Context) Stream(step func(w io.Writer) bool) {
 /******** CONTENT NEGOTIATION *******/
 /************************************/
 
-// Negotiate contains all negotiations data.
 type Negotiate struct {
 	Offered  []string
 	HTMLName string
@@ -866,7 +848,6 @@ type Negotiate struct {
 	Data     interface{}
 }
 
-// Negotiate calls different Render according acceptable Accept format.
 func (c *Context) Negotiate(code int, config Negotiate) {
 	switch c.NegotiateFormat(config.Offered...) {
 	case binding.MIMEJSON:
@@ -886,7 +867,6 @@ func (c *Context) Negotiate(code int, config Negotiate) {
 	}
 }
 
-// NegotiateFormat returns an acceptable Accept format.
 func (c *Context) NegotiateFormat(offered ...string) string {
 	assert1(len(offered) > 0, "you must provide at least one offer")
 
@@ -906,7 +886,6 @@ func (c *Context) NegotiateFormat(offered ...string) string {
 	return ""
 }
 
-// SetAccepted sets Accept header data.
 func (c *Context) SetAccepted(formats ...string) {
 	c.Accepted = formats
 }

@@ -102,7 +102,7 @@ func (clt *Client) listen() {
 				recordSize = len(r)
 			}
 
-			if recordSize+1 >= maxRecordSize {
+			if recordSize > maxRecordSize {
 				log.Printf("Kinesis client %s [%d]: ERROR: one record is over the limit %d/%d", clt.srv.cfg.StreamName, clt.ID, recordSize, maxRecordSize)
 				continue
 			}
@@ -110,7 +110,7 @@ func (clt *Client) listen() {
 			clt.count++
 
 			// The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
-			if clt.count >= clt.srv.cfg.MaxRecords || len(clt.batch)+1 > maxBatchRecords || clt.batchSize+recordSize+1 >= maxBatchSize {
+			if clt.count >= clt.srv.cfg.MaxRecords || len(clt.batch) >= maxBatchRecords || clt.batchSize+recordSize+1 >= maxBatchSize {
 				// log.Printf("flush: count %d/%d | batch %d/%d | size [%d] %d/%d",
 				// 	clt.count, clt.srv.cfg.MaxRecords, len(clt.batch), maxBatchRecords, recordSize, (clt.batchSize+recordSize+1)/1024, maxBatchSize/1024)
 				// Force flush
@@ -118,7 +118,7 @@ func (clt *Client) listen() {
 			}
 
 			// The maximum size of a record sent to Kinesis Kinesis, before base64-encoding, is 1000 KB.
-			if !clt.srv.cfg.ConcatRecords || clt.buff.Len()+recordSize+1 >= maxRecordSize || clt.count+1 > clt.srv.cfg.MaxRecords {
+			if !clt.srv.cfg.ConcatRecords || clt.buff.Len()+recordSize+1 >= maxRecordSize || clt.count >= clt.srv.cfg.MaxRecords {
 				if clt.buff.Len() > 0 {
 					// Save in new record
 					buff := clt.buff
@@ -226,19 +226,22 @@ func (clt *Client) flush() {
 		// fails to be added to a stream includes ErrorCode and ErrorMessage in the
 		// result.
 		for i, r := range output.Records {
-			if r.ErrorCode != nil && *r.ErrorCode != "" {
-				if *r.ErrorCode == kinesisError {
-					log.Printf("Kinesis client %s [%d]: ERROR in AWS: %s - %s", clt.srv.cfg.StreamName, clt.ID, *r.ErrorCode, *r.ErrorMessage)
-				}
-				// Every message with error code means that message wasn't stored by Kinesis
-				// stream. We send back to the main channel every failed message. To be sure
-				// that we don't have problems with sync.pool the slice of bytes are copied
-				// and send to the main channel in a goroutine in order to don't block the
-				// operation if the channel is full.
-				go func(b []byte) {
-					clt.srv.C <- b
-				}(append([]byte(nil), clt.batch[i].B...))
+			if r == nil || r.ErrorCode != nil {
+				continue
 			}
+
+			if *r.ErrorCode == kinesisError {
+				log.Printf("Kinesis client %s [%d]: ERROR in AWS: %s - %s", clt.srv.cfg.StreamName, clt.ID, *r.ErrorCode, *r.ErrorMessage)
+			}
+			// Every message with error code means that message wasn't stored by Kinesis
+			// stream. We send back to the main channel every failed message. To be sure
+			// that we don't have problems with sync.pool the slice of bytes are copied
+			// and send to the main channel in a goroutine in order to don't block the
+			// operation if the channel is full.
+			go func(b []byte) {
+				clt.srv.C <- b
+			}(append([]byte(nil), clt.batch[i].B...))
+
 		}
 	}
 

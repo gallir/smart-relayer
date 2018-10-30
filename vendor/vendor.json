@@ -267,16 +267,16 @@
 			"revisionTime": "2018-03-08T16:09:40Z"
 		},
 		{
-			"checksumSHA1": "RLZUIQrcoWDaWWAJSri3fZjBX7U=",
+			"checksumSHA1": "qvJEv3Nu7bUrqHVQdTdgsFkIjBg=",
 			"path": "github.com/gabrielperezs/streamspooler/firehose",
-			"revision": "02a1e547fac2dc27d7c1d8eac3b7d59ff4e23ee9",
-			"revisionTime": "2018-10-08T11:18:18Z"
+			"revision": "106bfde67b93780b66b490e3aafe04c9c47e7aac",
+			"revisionTime": "2018-10-22T17:38:56Z"
 		},
 		{
-			"checksumSHA1": "1NAgKu53jHIBrLyPvmr6vC7ExMc=",
+			"checksumSHA1": "6AhJxivTf3mQoQ/IFeYXFQLmBtI=",
 			"path": "github.com/gabrielperezs/streamspooler/kinesis",
-			"revision": "02a1e547fac2dc27d7c1d8eac3b7d59ff4e23ee9",
-			"revisionTime": "2018-10-08T11:18:18Z"
+			"revision": "106bfde67b93780b66b490e3aafe04c9c47e7aac",
+			"revisionTime": "2018-10-22T17:38:56Z"
 		},
 		{
 			"checksumSHA1": "vxCim402/oxPXxDILtBxxyE8iIc=",
@@ -297,16 +297,20 @@
 			"revisionTime": "2017-01-09T09:34:21Z"
 		},
 		{
-			"checksumSHA1": "UM35X2rfBqRbopTEnshQ1FzCQHg=",
+			"checksumSHA1": "90S9sFqcIo/uuwQzz1t/wYs7GEs=",
 			"path": "github.com/gin-gonic/gin",
-			"revision": "524757b81c99e51a64e6ecc7ee0c181abc39bd79",
-			"revisionTime": "2018-10-15T12:24:32Z"
+			"revision": "b869fe1415e4b9eb52f247441830d502aece2d4d",
+			"revisionTime": "2018-08-14T08:58:52Z",
+			"version": "v1.3",
+			"versionExact": "v1.3.0"
 		},
 		{
-			"checksumSHA1": "2zQvkwtPsCLc+y7YiHQO2R9Oqd0=",
+			"checksumSHA1": "BjShmaQTKI8+411rCb7LFqJkLA0=",
 			"path": "github.com/gin-gonic/gin/binding",
-			"revision": "524757b81c99e51a64e6ecc7ee0c181abc39bd79",
-			"revisionTime": "2018-10-15T12:24:32Z"
+			"revision": "b869fe1415e4b9eb52f247441830d502aece2d4d",
+			"revisionTime": "2018-08-14T08:58:52Z",
+			"version": "v1.3",
+			"versionExact": "v1.3.0"
 		},
 		{
 			"checksumSHA1": "Y8Vu2NT4c2ve963fedBxoJyiU6s=",
@@ -317,14 +321,18 @@
 		{
 			"checksumSHA1": "woO1qIxIeQ1bcbPSiMfAKk3r4xg=",
 			"path": "github.com/gin-gonic/gin/json",
-			"revision": "85221af84cf6ee99dc900bc41912abc09acfc1b5",
-			"revisionTime": "2018-07-03T09:17:08Z"
+			"revision": "b869fe1415e4b9eb52f247441830d502aece2d4d",
+			"revisionTime": "2018-08-14T08:58:52Z",
+			"version": "v1.3",
+			"versionExact": "v1.3.0"
 		},
 		{
-			"checksumSHA1": "afLqBfX9SeIP6eeTZb3WwdTFaOo=",
+			"checksumSHA1": "f1n8P2YAi3o+X0//dkoDJ822zW0=",
 			"path": "github.com/gin-gonic/gin/render",
-			"revision": "524757b81c99e51a64e6ecc7ee0c181abc39bd79",
-			"revisionTime": "2018-10-15T12:24:32Z"
+			"revision": "b869fe1415e4b9eb52f247441830d502aece2d4d",
+			"revisionTime": "2018-08-14T08:58:52Z",
+			"version": "v1.3",
+			"versionExact": "v1.3.0"
 		},
 		{
 			"checksumSHA1": "VvZKmbuBN1QAG699KduTdmSPwA4=",
