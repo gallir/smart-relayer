@@ -101,7 +101,7 @@ func (clt *Client) listen() {
 				recordSize = len(r)
 			}
 
-			if recordSize > maxRecordSize {
+			if recordSize+1 >= maxRecordSize {
 				log.Printf("Firehose client %s [%d]: ERROR: one record is over the limit %d/%d", clt.srv.cfg.StreamName, clt.ID, recordSize, maxRecordSize)
 				continue
 			}
@@ -232,7 +232,7 @@ func (clt *Client) flush() {
 		time.Sleep(partialFailureWait)
 
 		for i, r := range output.RequestResponses {
-			if r == nil || r.ErrorCode == nil {
+			if r.ErrorCode == nil && *r.ErrorCode != "" {
 				continue
 			}
 
