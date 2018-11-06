@@ -18,11 +18,12 @@ import (
 
 const (
 	recordsTimeout     = 15 * time.Second
-	maxRecordSize      = 1000 * 1024     // The maximum size of a record sent to Kinesis Kinesis, before base64-encoding, is 1000 KB
-	maxBatchRecords    = 500             // The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
-	maxBatchSize       = 4 * 1024 * 1024 // 4 MB per call
+	maxRecordSize      = 1000 * 1000 // The maximum size of a record sent to Kinesis Kinesis, before base64-encoding, is 1000 KB
+	maxBatchRecords    = 500         // The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
+	maxBatchSize       = 3 << 20     // 4 MB per call
 	partialFailureWait = 200 * time.Millisecond
 	totalFailureWait   = 500 * time.Millisecond
+	onFlyRetryLimit    = 1024 * 2
 
 	kinesisError = "InternalFailure"
 )
@@ -49,6 +50,7 @@ type Client struct {
 	ID          int64
 	t           *time.Timer
 	lastFlushed time.Time
+	onFlyRetry  int64
 }
 
 // NewClient creates a new client that connects to a kinesis
@@ -132,14 +134,18 @@ func (clt *Client) listen() {
 
 			clt.batchSize += clt.buff.Len()
 
+			if len(clt.batch)+1 >= maxBatchRecords || clt.batchSize >= maxBatchSize {
+				clt.flush()
+			}
+
 		case <-clt.t.C:
+			clt.flush()
 			if clt.buff.Len() > 0 {
 				buff := clt.buff
 				clt.batch = append(clt.batch, buff)
 				clt.buff = pool.Get()
+				clt.flush()
 			}
-			clt.flush()
-
 		case <-clt.finish:
 			//Stop and drain the timer channel
 			if !clt.t.Stop() {
@@ -149,11 +155,12 @@ func (clt *Client) listen() {
 				}
 			}
 
+			clt.flush()
 			if clt.buff.Len() > 0 {
 				clt.batch = append(clt.batch, clt.buff)
+				clt.flush()
 			}
 
-			clt.flush()
 			if l := len(clt.batch); l > 0 {
 				log.Printf("Kinesis client %s [%d]: Exit, %d records lost", clt.srv.cfg.StreamName, clt.ID, l)
 				return
@@ -208,9 +215,13 @@ func (clt *Client) flush() {
 		time.Sleep(totalFailureWait)
 
 		for i := range clt.batch {
-			go func(b []byte) {
-				clt.srv.C <- b
-			}(append([]byte(nil), clt.batch[i].B...))
+			// The limit of retry elements will be applied just to non-critical messages
+			if !clt.srv.cfg.Critical && atomic.LoadInt64(&clt.onFlyRetry) > onFlyRetryLimit {
+				log.Printf("Kinesis client %s [%d]: ERROR maximum of batch records retrying (%d): %s",
+					clt.srv.cfg.StreamName, clt.ID, onFlyRetryLimit, err)
+				continue
+			}
+			clt.retry(clt.batch[i].B)
 		}
 	} else if *output.FailedRecordCount > 0 {
 		log.Printf("Kinesis client %s [%d]: partial failed, %d sent back to the buffer", clt.srv.cfg.StreamName, clt.ID, *output.FailedRecordCount)
@@ -233,15 +244,19 @@ func (clt *Client) flush() {
 			if *r.ErrorCode == kinesisError {
 				log.Printf("Kinesis client %s [%d]: ERROR in AWS: %s - %s", clt.srv.cfg.StreamName, clt.ID, *r.ErrorCode, *r.ErrorMessage)
 			}
+
+			// The limit of retry elements will be applied just to non-critical messages
+			if !clt.srv.cfg.Critical && atomic.LoadInt64(&clt.onFlyRetry) > onFlyRetryLimit {
+				log.Printf("Kinesis client %s [%d]: ERROR maximum of batch records retrying (%d): %s",
+					clt.srv.cfg.StreamName, clt.ID, onFlyRetryLimit, err)
+				continue
+			}
 			// Every message with error code means that message wasn't stored by Kinesis
 			// stream. We send back to the main channel every failed message. To be sure
 			// that we don't have problems with sync.pool the slice of bytes are copied
 			// and send to the main channel in a goroutine in order to don't block the
 			// operation if the channel is full.
-			go func(b []byte) {
-				clt.srv.C <- b
-			}(append([]byte(nil), clt.batch[i].B...))
-
+			clt.retry(clt.batch[i].B)
 		}
 	}
 
@@ -260,4 +275,16 @@ func (clt *Client) flush() {
 func (clt *Client) Exit() {
 	clt.finish <- true
 	<-clt.done
+}
+
+func (clt *Client) retry(orig []byte) {
+	// Remove the last newLine
+	b := make([]byte, len(orig)-len(newLine))
+	copy(b, orig[:len(orig)-len(newLine)])
+
+	go func(b []byte) {
+		atomic.AddInt64(&clt.onFlyRetry, 1)
+		defer atomic.AddInt64(&clt.onFlyRetry, -1)
+		clt.srv.C <- b
+	}(b)
 }

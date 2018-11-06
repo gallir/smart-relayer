@@ -267,16 +267,22 @@
 			"revisionTime": "2018-03-08T16:09:40Z"
 		},
 		{
-			"checksumSHA1": "qvJEv3Nu7bUrqHVQdTdgsFkIjBg=",
-			"path": "github.com/gabrielperezs/streamspooler/firehose",
-			"revision": "106bfde67b93780b66b490e3aafe04c9c47e7aac",
-			"revisionTime": "2018-10-22T17:38:56Z"
+			"checksumSHA1": "XG/jKH0zQyUGQI9ZZZ2rL5PnY1s=",
+			"path": "github.com/gabrielperezs/streamspooler",
+			"revision": "529285c62b981393a2eab6c84bbc97f2ee90dce1",
+			"revisionTime": "2018-11-06T19:02:19Z"
 		},
 		{
-			"checksumSHA1": "6AhJxivTf3mQoQ/IFeYXFQLmBtI=",
+			"checksumSHA1": "lkqtE00l0eKhdebNta+SOrhQeLk=",
+			"path": "github.com/gabrielperezs/streamspooler/firehose",
+			"revision": "529285c62b981393a2eab6c84bbc97f2ee90dce1",
+			"revisionTime": "2018-11-06T19:02:19Z"
+		},
+		{
+			"checksumSHA1": "g+JCbAbylL8/2xObFyT1zYNlL/A=",
 			"path": "github.com/gabrielperezs/streamspooler/kinesis",
-			"revision": "106bfde67b93780b66b490e3aafe04c9c47e7aac",
-			"revisionTime": "2018-10-22T17:38:56Z"
+			"revision": "529285c62b981393a2eab6c84bbc97f2ee90dce1",
+			"revisionTime": "2018-11-06T19:02:19Z"
 		},
 		{
 			"checksumSHA1": "vxCim402/oxPXxDILtBxxyE8iIc=",

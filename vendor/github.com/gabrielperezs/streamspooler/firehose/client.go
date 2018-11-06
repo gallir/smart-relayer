@@ -15,9 +15,9 @@ import (
 
 const (
 	recordsTimeout  = 15 * time.Second
-	maxRecordSize   = 1000 * 1024     // The maximum size of a record sent to Kinesis Firehose, before base64-encoding, is 1000 KB
-	maxBatchRecords = 500             // The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
-	maxBatchSize    = 4 * 1024 * 1024 // 4 MB per call
+	maxRecordSize   = 1000 * 1000 // The maximum size of a record sent to Kinesis Firehose, before base64-encoding, is 1000 KB
+	maxBatchRecords = 500         // The PutRecordBatch operation can take up to 500 records per call or 4 MB per call, whichever is smaller. This limit cannot be changed.
+	maxBatchSize    = 3 << 20     // 4 MiB per call
 
 	partialFailureWait = 200 * time.Millisecond
 	globalFailureWait  = 500 * time.Millisecond
@@ -131,14 +131,18 @@ func (clt *Client) listen() {
 
 			clt.batchSize += clt.buff.Len()
 
+			if len(clt.batch)+1 >= maxBatchRecords || clt.batchSize >= maxBatchSize {
+				clt.flush()
+			}
+
 		case <-clt.t.C:
+			clt.flush()
 			if clt.buff.Len() > 0 {
 				buff := clt.buff
 				clt.batch = append(clt.batch, buff)
 				clt.buff = pool.Get()
+				clt.flush()
 			}
-			clt.flush()
-
 		case <-clt.finish:
 			//Stop and drain the timer channel
 			if !clt.t.Stop() {
@@ -148,11 +152,12 @@ func (clt *Client) listen() {
 				}
 			}
 
+			clt.flush()
 			if clt.buff.Len() > 0 {
 				clt.batch = append(clt.batch, clt.buff)
+				clt.flush()
 			}
 
-			clt.flush()
 			if l := len(clt.batch); l > 0 {
 				log.Printf("Firehose client %s [%d]: Exit, %d records lost", clt.srv.cfg.StreamName, clt.ID, l)
 				return
@@ -206,6 +211,11 @@ func (clt *Client) flush() {
 			log.Printf("Firehose client %s [%d]: ERROR IsErrorThrottle: %s", clt.srv.cfg.StreamName, clt.ID, err)
 		} else {
 			log.Printf("Firehose client %s [%d]: ERROR PutRecordBatch->Send: %s", clt.srv.cfg.StreamName, clt.ID, err)
+			var totalSize int
+			for _, b := range clt.batch {
+				totalSize += b.Len()
+			}
+			log.Printf("Firehose client %s [%d]: DEBUG: Records %d, Bytes %d", clt.srv.cfg.StreamName, clt.ID, len(clt.batch), totalSize)
 		}
 		clt.srv.failure()
 
@@ -220,11 +230,9 @@ func (clt *Client) flush() {
 					clt.srv.cfg.StreamName, clt.ID, onFlyRetryLimit, err)
 				continue
 			}
-			go func(b []byte) {
-				atomic.AddInt64(&clt.onFlyRetry, 1)
-				defer atomic.AddInt64(&clt.onFlyRetry, -1)
-				clt.srv.C <- b
-			}(append([]byte(nil), clt.batch[i].B...))
+
+			// Sending back to channel, it will run a goroutine
+			clt.retry(clt.batch[i].B)
 		}
 	} else if *output.FailedPutCount > 0 {
 		log.Printf("Firehose client %s [%d]: partial failed, %d sent back to the buffer", clt.srv.cfg.StreamName, clt.ID, *output.FailedPutCount)
@@ -247,11 +255,8 @@ func (clt *Client) flush() {
 				log.Printf("Firehose client %s [%d]: ERROR in AWS: %s - %s", clt.srv.cfg.StreamName, clt.ID, *r.ErrorCode, *r.ErrorMessage)
 			}
 
-			go func(b []byte) {
-				atomic.AddInt64(&clt.onFlyRetry, 1)
-				defer atomic.AddInt64(&clt.onFlyRetry, -1)
-				clt.srv.C <- b
-			}(append([]byte(nil), clt.batch[i].B...))
+			// Sending back to channel, it will run a goroutine
+			clt.retry(clt.batch[i].B)
 		}
 	}
 
@@ -270,4 +275,16 @@ func (clt *Client) flush() {
 func (clt *Client) Exit() {
 	clt.finish <- true
 	<-clt.done
+}
+
+func (clt *Client) retry(orig []byte) {
+	// Remove the last byte, is a newLine
+	b := make([]byte, len(orig)-len(newLine))
+	copy(b, orig[:len(orig)-len(newLine)])
+
+	go func(b []byte) {
+		atomic.AddInt64(&clt.onFlyRetry, 1)
+		defer atomic.AddInt64(&clt.onFlyRetry, -1)
+		clt.srv.C <- b
+	}(b)
 }
