@@ -76,8 +76,15 @@ func (a *Athena) Read(queryExecutionId string, nextToken string, maxResults int6
 		return nil, "", err
 	}
 
-	if *queryExec.QueryExecution.Status.State != "SUCCEEDED" {
+	switch *queryExec.QueryExecution.Status.State {
+	case "QUEUED", "RUNNING":
 		return nil, "", ErrPending
+	case "SUCCEEDED":
+		// Just continue, reading the results of the query
+		break
+	default:
+		// unknow status
+		return nil, "", fmt.Errorf("Invalid query: %s", *queryExec.QueryExecution.Status.State)
 	}
 
 	getInput := &athena.GetQueryResultsInput{
