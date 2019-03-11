@@ -131,6 +131,10 @@ func (srv *Server) get(ctx *gin.Context) {
 		maxResults = defaultMaxResults
 	}
 
+	// we need to add one as the first row of every result set is the header row
+	// and that is removed by the code
+	maxResults += 1
+
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), timeOut)
 	defer cancel()
 
