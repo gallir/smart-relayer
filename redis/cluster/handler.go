@@ -80,7 +80,7 @@ func (h *connHandler) process(req *redis.Resp) {
 		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
 			req:        req,
-			compress:   (h.srv.config.Compress || h.srv.config.Gzip != 0) && cmd != evalCommand,
+			compress:   (h.srv.config.Compress || h.srv.config.Gzip != 0) && !strings.HasPrefix(cmd, evalCommand),
 			mustAnswer: false,
 		}
 		return
@@ -92,14 +92,14 @@ func (h *connHandler) process(req *redis.Resp) {
 		atomic.AddInt32(&h.pending, 1)
 		h.reqCh <- reqData{
 			req:        req,
-			compress:   (h.srv.config.Compress || h.srv.config.Gzip != 0) && cmd != evalCommand,
+			compress:   (h.srv.config.Compress || h.srv.config.Gzip != 0) && !strings.HasPrefix(cmd, evalCommand),
 			mustAnswer: true,
 		}
 		return
 	}
 
 	// No ongoing operations, we can send directly
-	h.sender(true, req, h.srv.config.Compress && cmd != evalCommand, false)
+	h.sender(true, req, h.srv.config.Compress && !strings.HasPrefix(cmd, evalCommand), false)
 }
 
 func (h *connHandler) sendWorker() {
