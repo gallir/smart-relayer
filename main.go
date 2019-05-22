@@ -21,13 +21,13 @@ import (
 	"github.com/gallir/smart-relayer/redis/fh"
 	"github.com/gallir/smart-relayer/redis/fs"
 	"github.com/gallir/smart-relayer/redis/kinesis"
-	"github.com/gallir/smart-relayer/redis/radix"
+	redis2 "github.com/gallir/smart-relayer/redis/radix"
 	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 	"github.com/gallir/smart-relayer/redis/rsqs"
 )
 
 const (
-	version = "8.8.6"
+	version = "8.8.7"
 )
 
 var (
