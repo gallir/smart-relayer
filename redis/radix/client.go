@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -238,7 +239,7 @@ func (clt *Client) write(r *lib.Request) (int64, error) {
 
 	resp := r.Resp
 	// Use compression just if is not an EVAL command
-	if r.Command != evalCommand {
+	if !strings.HasPrefix(r.Command, evalCommand) {
 		switch {
 		case clt.config.Gzip != 0:
 			resp.CompressGz(lib.MinCompressSize, clt.config.Gzip)
