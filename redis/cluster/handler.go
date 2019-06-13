@@ -29,6 +29,11 @@ func Handle(srv *Server, netCon net.Conn) {
 	defer h.close()
 
 	reader := redis.NewRespReader(h.conn)
+	var asyncCommands map[string]*redis.Resp
+	if srv.mode == lib.ModeSmart {
+		asyncCommands = srv.asynCommands.Load().(map[string]*redis.Resp)
+	}
+
 	for {
 		req := reader.Read()
 		if req.IsType(redis.IOErr) {
@@ -38,7 +43,7 @@ func Handle(srv *Server, netCon net.Conn) {
 			return
 		}
 
-		h.process(req)
+		h.process(req, asyncCommands)
 	}
 }
 
@@ -49,7 +54,7 @@ func (h *connHandler) close() {
 	h.conn.Close()
 }
 
-func (h *connHandler) process(req *redis.Resp) {
+func (h *connHandler) process(req *redis.Resp, asyncCommands map[string]*redis.Resp) {
 	cmd, err := req.First()
 	if err != nil {
 		respBadCommand.WriteTo(h.conn)
@@ -64,10 +69,8 @@ func (h *connHandler) process(req *redis.Resp) {
 
 	doAsync := false
 	var fastResponse *redis.Resp
-	if h.srv.mode == lib.ModeSmart {
-		if async, ok := h.srv.asynCommands.Load().(map[string]*redis.Resp); ok {
-			fastResponse, doAsync = async[cmd]
-		}
+	if h.srv.mode == lib.ModeSmart && asyncCommands != nil {
+		fastResponse, doAsync = asyncCommands[cmd]
 	}
 
 	if doAsync {

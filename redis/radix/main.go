@@ -166,6 +166,11 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 	currentDB := 0
 
+	var asyncCommands map[string]*redis.Resp
+	if srv.mode == lib.ModeSmart {
+		asyncCommands = srv.asynCommands.Load().(map[string]*redis.Resp)
+	}
+
 	for {
 		r := reader.Read()
 		if r.IsType(redis.IOErr) {
@@ -190,14 +195,12 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		req.Database = currentDB
 
 		// Smart mode, answer immediately and forget
-		if srv.mode == lib.ModeSmart {
+		if srv.mode == lib.ModeSmart && asyncCommands != nil {
 			// Commands that was defined as async in the configuration file
-			if async, ok := srv.asynCommands.Load().(map[string]*redis.Resp); ok {
-				if fastResponse, ok := async[req.Command]; ok {
-					fastResponse.WriteTo(netCon)
-					client.send(req)
-					continue
-				}
+			if fastResponse, ok := asyncCommands[req.Command]; ok {
+				fastResponse.WriteTo(netCon)
+				client.send(req)
+				continue
 			}
 		}
 
