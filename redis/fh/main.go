@@ -227,6 +227,15 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			continue
 		}
 
+		if req.Command == "ECHO" {
+			if len(req.Items) == 2 {
+				req.Items[1].WriteTo(netCon)
+			} else {
+				respBadCommand.WriteTo(netCon)
+			}
+			continue
+		}
+
 		fastResponse, ok := commands[req.Command]
 		if !ok {
 			respBadCommand.WriteTo(netCon)
