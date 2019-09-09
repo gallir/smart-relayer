@@ -237,6 +237,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 		switch req.Command {
 		case "RAWSET":
+			if len(req.Items) < 2 {
+				lib.Debugf("Error, bad number of arguments %#v", r.String())
+				continue
+			}
 			if multi || len(req.Items) > 2 {
 				respKO.WriteTo(netCon)
 				continue
@@ -250,6 +254,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			multi = false
 			srv.sendRecord(row)
 		case "SET", "CSET":
+			if len(req.Items) < 2 {
+				lib.Debugf("Error, bad number of arguments %#v", r.String())
+				continue
+			}
 			k, _ := req.Items[1].Str()
 
 			var v interface{}
@@ -267,6 +275,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				srv.sendRecord(row)
 			}
 		case "SADD", "CSADD":
+			if len(req.Items) < 2 {
+				lib.Debugf("Error, bad number of arguments %#v", r.String())
+				continue
+			}
 			k, _ := req.Items[1].Str()
 
 			var v interface{}
@@ -288,6 +300,10 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			var k string
 			var v interface{}
 
+			if len(req.Items) < 2 {
+				lib.Debugf("Error, bad number of arguments %#v", r.String())
+				continue
+			}
 			if !multi {
 				row = lib.NewInterRecord()
 				row.Types = 0
