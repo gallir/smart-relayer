@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	version = "8.8.7"
+	version = "8.8.8"
 )
 
 var (

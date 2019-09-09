@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gabrielperezs/streamspooler/firehose"
+	firehosePool "github.com/gabrielperezs/streamspooler/firehose"
 	"github.com/gallir/smart-relayer/lib"
 	"github.com/gallir/smart-relayer/redis/radix.improved/redis"
 )
@@ -203,15 +203,23 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 
 		r := reader.Read()
 
-		if r.IsType(redis.IOErr) {
-			if redis.IsTimeout(r) {
-				// Paranoid, don't close it just log it
-				log.Println("Firehose: Local client listen timeout at", srv.config.Listen)
-				continue
+		if r.IsType(redis.Err) {
+			if r.IsType(redis.IOErr) {
+				if r.IsType(redis.IOErr) && redis.IsTimeout(r) {
+					// Paranoid, don't close it just log it
+					log.Println("Firehose: Local client listen timeout at", srv.config.Listen)
+					continue
+				}
+				// Connection was closed
+				return
 			}
-			// Connection was closed
+			// Other error
+			lib.Debugf("Error with request %#v", r.String())
 			return
 		}
+
+		// For debug
+		lib.Debugf("DEBUG: %#v", r.String())
 
 		req := lib.NewRequest(r, &srv.config)
 		if req == nil {
