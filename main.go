@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/gallir/smart-relayer/httpTo/httpToFirehose"
 	"log"
 	"log/syslog"
 	"os"
@@ -48,6 +49,8 @@ func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
 		srv, err = cluster.New(conf, done)
 	case "firehose":
 		srv, err = fh.New(conf, done)
+	case "httpToFirehose":
+		srv, err = httpToFirehose.New(conf, done)
 	case "kinesis":
 		srv, err = kinesis.New(conf, done)
 	case "sqs":

@@ -42,6 +42,10 @@ func (r *InterRecord) Add(key string, value interface{}) {
 	}
 }
 
+func (r *InterRecord) SetData(data map[string]interface{}) {
+	r.Data = data
+}
+
 func (r *InterRecord) Sadd(key string, value interface{}) {
 	if _, ok := r.Data[key]; !ok {
 		r.Data[key] = make([]interface{}, 0)
