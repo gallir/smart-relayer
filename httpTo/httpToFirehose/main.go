@@ -81,7 +81,7 @@ func (srv *Server) Start() (e error) {
 
 	r := router.New()
 	r.GET("/ping", srv.ok)
-	r.POST("/firehose_raw", srv.submitRaw)
+	r.POST("/firehose-raw", srv.submitRaw)
 	r.POST("/firehose", srv.submit)
 
 	srv.engine = &fasthttp.Server{
