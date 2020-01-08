@@ -3,15 +3,15 @@ package httpToFirehose
 import (
 	"encoding/json"
 	firehosePool "github.com/gabrielperezs/streamspooler/firehose"
-	"io/ioutil"
 	"log"
-	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/fasthttp/router"
 	"github.com/gallir/smart-relayer/lib"
-	"github.com/gin-gonic/gin"
+	"github.com/valyala/fasthttp"
 )
 
 // Server is the thread that listen for clients' connections
@@ -20,7 +20,7 @@ type Server struct {
 	config  lib.RelayerConfig
 	done    chan bool
 	exiting bool
-	engine  *gin.Engine
+	engine  *fasthttp.Server
 
 	fh             *firehosePool.Server
 	lastConnection time.Time
@@ -79,17 +79,21 @@ func (srv *Server) Start() (e error) {
 		return nil
 	}
 
-	gin.SetMode(gin.ReleaseMode)
-	srv.engine = gin.New()
-	srv.engine.POST("/firehose_raw", srv.submitRaw)
-	srv.engine.POST("/firehose", srv.submit)
-	srv.engine.GET("/ping", srv.ok)
+	r := router.New()
+	r.GET("/ping", srv.ok)
+	r.POST("/firehose_raw", srv.submitRaw)
+	r.POST("/firehose", srv.submit)
+
+	srv.engine = &fasthttp.Server{
+		Handler: r.Handler,
+	}
+
 	go func() {
 		switch {
 		case strings.HasPrefix(srv.config.Listen, "tcp://"):
-			e = srv.engine.Run(srv.config.Listen[6:])
+			e = srv.engine.ListenAndServe(srv.config.Listen[6:])
 		case strings.HasPrefix(srv.config.Listen, "unix://"):
-			e = srv.engine.RunUnix(srv.config.Listen[7:])
+			e = srv.engine.ListenAndServeUNIX(srv.config.Listen[7:], os.FileMode(0666))
 		}
 	}()
 	return e
@@ -100,62 +104,37 @@ func (srv *Server) Exit() {
 	srv.exiting = true
 
 	if srv.engine != nil {
-		// finish gin
+		if e := srv.engine.Shutdown(); e != nil {
+			log.Println("httpToFirehose ERROR: shutting down failed", e)
+		}
 	}
 
 	// finishing the server
 	srv.done <- true
 }
 
-func (srv *Server) ok(ctx *gin.Context) {
-	ctx.IndentedJSON(http.StatusOK, map[string]interface{}{
-		"status": "success",
-	})
+func (srv *Server) ok(ctx *fasthttp.RequestCtx) {
+	ctx.SetContentType("application/json")
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBody([]byte("{\"status\": \"success\"}"))
 }
 
-func (srv *Server) submitRaw(ctx *gin.Context) {
+func (srv *Server) submitRaw(ctx *fasthttp.RequestCtx) {
+	srv.sendBytes(ctx.Request.Body()) // Does not check if the data is a valid json.
 
-	b, err := ioutil.ReadAll(ctx.Request.Body)
-	if err != nil {
-		ctx.String(http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err != nil {
-		ctx.IndentedJSON(http.StatusBadRequest, map[string]interface{}{
-			"Error": err.Error(),
-		})
-		return
-	}
-
-	srv.sendBytes(b) // Does not check if the data is a valid json.
-
-	ctx.IndentedJSON(http.StatusOK, map[string]interface{}{
-		"status": "success",
-	})
+	ctx.SetContentType("application/json")
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBody([]byte("{\"status\": \"success\"}"))
 }
 
-func (srv *Server) submit(ctx *gin.Context) {
+func (srv *Server) submit(ctx *fasthttp.RequestCtx) {
+	ctx.SetContentType("application/json")
 
-	b, err := ioutil.ReadAll(ctx.Request.Body)
-	if err != nil {
-		ctx.String(http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err != nil {
-		ctx.IndentedJSON(http.StatusBadRequest, map[string]interface{}{
-			"Error": err.Error(),
-		})
-		return
-	}
 	var parsedJson map[string]interface{}
-
-	err = json.Unmarshal(b, &parsedJson)
+	err := json.Unmarshal(ctx.Request.Body(), &parsedJson)
 	if err != nil {
-		ctx.IndentedJSON(http.StatusBadRequest, map[string]interface{}{
-			"Error": err.Error(),
-		})
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetBody([]byte("{\"status\": \"invalid_json\"}"))
 		return
 	}
 
@@ -163,9 +142,8 @@ func (srv *Server) submit(ctx *gin.Context) {
 	rowWithTimestamp.SetData(parsedJson)
 	srv.sendRecord(rowWithTimestamp)
 
-	ctx.IndentedJSON(http.StatusOK, map[string]interface{}{
-		"status": "success",
-	})
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBody([]byte("{\"status\": \"success\"}"))
 }
 
 func (srv *Server) sendRecord(r *lib.InterRecord) {
