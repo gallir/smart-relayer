@@ -109,6 +109,16 @@ func (srv *Server) Exit() {
 		}
 	}
 
+	someConnectionsOpen := srv.engine.GetOpenConnectionsCount() > 0
+	for i := 0; i < 5 && someConnectionsOpen ; i++ {
+		time.Sleep(5 * time.Second)
+		someConnectionsOpen = srv.engine.GetOpenConnectionsCount() > 0
+	}
+
+	if someConnectionsOpen {
+		log.Println("httpToFirehose ERROR: Not all connections closed on the fasthttp server.")
+	}
+
 	if srv.fh != nil {
 		srv.fh.Exit()
 	}
