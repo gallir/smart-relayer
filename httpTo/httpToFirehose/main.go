@@ -109,6 +109,10 @@ func (srv *Server) Exit() {
 		}
 	}
 
+	if srv.fh != nil {
+		srv.fh.Exit()
+	}
+
 	// finishing the server
 	srv.done <- true
 }
