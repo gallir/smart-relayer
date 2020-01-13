@@ -162,7 +162,7 @@ func NewRespReader(r io.Reader) *RespReader {
 	return &RespReader{br}
 }
 
-// ReadResp attempts to read a message object from the given io.Reader, parse
+// Read attempts to read a message object from the given io.Reader, parse
 // it, and return a Resp representing it
 func (rr *RespReader) Read() *Resp {
 	res, err := bufioReadResp(rr.r)

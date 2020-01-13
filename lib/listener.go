@@ -11,7 +11,7 @@ type Listener struct {
 	listener net.Listener
 }
 
-// MewListener check sockets and files and return a listener alread listening
+// NewListener check sockets and files and return a listener alread listening
 func NewListener(c RelayerConfig) (l *Listener, e error) {
 	l = &Listener{
 		config: c,
