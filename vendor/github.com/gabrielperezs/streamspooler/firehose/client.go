@@ -2,6 +2,7 @@ package firehosePool
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -10,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/firehose"
 	"github.com/gallir/bytebufferpool"
-	"github.com/gallir/smart-relayer/redis"
+	compress "github.com/gallir/smart-relayer/redis"
 )
 
 const (
@@ -43,6 +44,7 @@ type Client struct {
 	batchSize   int
 	records     []*firehose.Record
 	done        chan bool
+	flushed     chan bool
 	finish      chan bool
 	ID          int64
 	t           *time.Timer
@@ -57,6 +59,7 @@ func NewClient(srv *Server) *Client {
 	clt := &Client{
 		done:    make(chan bool),
 		finish:  make(chan bool),
+		flushed: make(chan bool),
 		srv:     srv,
 		ID:      n,
 		t:       time.NewTimer(recordsTimeout),
@@ -143,35 +146,51 @@ func (clt *Client) listen() {
 				clt.buff = pool.Get()
 				clt.flush()
 			}
-		case <-clt.finish:
+		case f := <-clt.finish:
 			//Stop and drain the timer channel
-			if !clt.t.Stop() {
+			if f && !clt.t.Stop() {
 				select {
 				case <-clt.t.C:
 				default:
 				}
 			}
 
-			clt.flush()
+			var err error
 			if clt.buff.Len() > 0 {
+				if len(clt.batch) >= maxBatchRecords {
+					err = clt.flush()
+				}
 				clt.batch = append(clt.batch, clt.buff)
-				clt.flush()
+				clt.buff = pool.Get() // Get a new pool in case is only a flush
 			}
+			err = clt.flush()
 
-			if l := len(clt.batch); l > 0 {
-				log.Printf("Firehose client %s [%d]: Exit, %d records lost", clt.srv.cfg.StreamName, clt.ID, l)
+			if f {
+				// Have to finish
+				if l := len(clt.batch); l > 0 {
+					log.Printf("Firehose client %s [%d]: Exit, %d records lost", clt.srv.cfg.StreamName, clt.ID, l)
+					clt.done <- false // WARN: To avoid blocking the processs
+					return
+				}
+
+				log.Printf("Firehose client %s [%d]: Exit", clt.srv.cfg.StreamName, clt.ID)
+				clt.done <- true
 				return
 			}
 
-			log.Printf("Firehose client %s [%d]: Exit", clt.srv.cfg.StreamName, clt.ID)
-			clt.done <- true
-			return
+			// Only a flush
+			if l := len(clt.batch); l > 0 || err != nil {
+				log.Printf("Firehose client %s [%d]: Flush, %d records pending", clt.srv.cfg.StreamName, clt.ID, l)
+				clt.flushed <- false // WARN: To avoid blocking the processs
+				return
+			}
+			clt.flushed <- true
 		}
 	}
 }
 
 // flush build the last record if need and send the records slice to AWS Firehose
-func (clt *Client) flush() {
+func (clt *Client) flush() error {
 
 	if !clt.t.Stop() {
 		select {
@@ -184,7 +203,7 @@ func (clt *Client) flush() {
 	size := len(clt.batch)
 	// Don't send empty batch
 	if size == 0 {
-		return
+		return nil
 	}
 
 	// Create slice with the struct need by firehose
@@ -207,6 +226,9 @@ func (clt *Client) flush() {
 	// Send the request
 	err := req.Send()
 	if err != nil {
+		if clt.srv.cfg.OnFHError != nil {
+			clt.srv.cfg.OnFHError(err)
+		}
 		if req.IsErrorThrottle() {
 			log.Printf("Firehose client %s [%d]: ERROR IsErrorThrottle: %s", clt.srv.cfg.StreamName, clt.ID, err)
 		} else {
@@ -244,6 +266,10 @@ func (clt *Client) flush() {
 				continue
 			}
 
+			if clt.srv.cfg.OnFHError != nil {
+				clt.srv.cfg.OnFHError(errors.New(*r.ErrorMessage))
+			}
+
 			// The limit of retry elements will be applied just to non-critical messages
 			if !clt.srv.cfg.Critical && atomic.LoadInt64(&clt.onFlyRetry) > onFlyRetryLimit {
 				log.Printf("Firehose client %s [%d]: ERROR maximum of batch records retrying %d, %s %s",
@@ -269,6 +295,8 @@ func (clt *Client) flush() {
 	clt.count = 0
 	clt.batch = nil
 	clt.records = nil
+
+	return err
 }
 
 // Exit finish the go routine of the client

@@ -18,7 +18,7 @@ const (
 )
 
 func (srv *Server) _reload() {
-	for _ = range srv.chReload {
+	for range srv.chReload {
 		if srv.isExiting() {
 			continue
 		}
@@ -64,7 +64,10 @@ func (srv *Server) clientsReset() (err error) {
 		var sess *session.Session
 
 		if srv.cfg.Profile != "" {
-			sess, err = session.NewSessionWithOptions(session.Options{Profile: srv.cfg.Profile})
+			sess, err = session.NewSessionWithOptions(session.Options{
+				Profile:           srv.cfg.Profile,
+				SharedConfigState: session.SharedConfigEnable,
+			})
 		} else {
 			sess, err = session.NewSession()
 		}
