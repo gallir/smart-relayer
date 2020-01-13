@@ -31,8 +31,8 @@ var (
 	defaultTimeout          = 5 * time.Second
 	defaultMaxResults int64 = 100
 
-	successResp = []byte("{\"status\": \"success\"}")
-	invalidResp = []byte("{\"status\": \"invalid_json\"}")
+	successResp = "{\"status\": \"success\"}"
+	invalidResp = "{\"status\": \"invalid_json\"}"
 )
 
 // New creates a new http local server
@@ -133,7 +133,7 @@ func (srv *Server) Exit() {
 func (srv *Server) ok(ctx *fasthttp.RequestCtx) {
 	ctx.SetContentType("application/json")
 	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetBody(successResp)
+	ctx.SetBodyString(successResp)
 }
 
 func (srv *Server) submitRaw(ctx *fasthttp.RequestCtx) {
@@ -141,7 +141,7 @@ func (srv *Server) submitRaw(ctx *fasthttp.RequestCtx) {
 
 	ctx.SetContentType("application/json")
 	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetBody(successResp)
+	ctx.SetBodyString(successResp)
 }
 
 func (srv *Server) submit(ctx *fasthttp.RequestCtx) {
@@ -151,7 +151,7 @@ func (srv *Server) submit(ctx *fasthttp.RequestCtx) {
 	err := json.Unmarshal(ctx.Request.Body(), &parsedJson)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
-		ctx.SetBody(invalidResp)
+		ctx.SetBodyString(invalidResp)
 		return
 	}
 
@@ -160,7 +160,7 @@ func (srv *Server) submit(ctx *fasthttp.RequestCtx) {
 	srv.sendRecord(rowWithTimestamp)
 
 	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetBody(successResp)
+	ctx.SetBodyString(successResp)
 }
 
 func (srv *Server) sendRecord(r *lib.InterRecord) {
