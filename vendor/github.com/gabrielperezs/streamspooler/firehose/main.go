@@ -1,6 +1,7 @@
 package firehosePool
 
 import (
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ const (
 // Config is the general configuration for the server
 type Config struct {
 	// Internal clients details
+	MinWorkers      int
 	MaxWorkers      int
 	ThresholdWarmUp float64
 	Interval        time.Duration
@@ -38,6 +40,8 @@ type Config struct {
 	StreamName string // Kinesis/Firehose stream name
 	Region     string // AWS region
 	Profile    string // AWS Profile name
+
+	OnFHError func(e error)
 }
 
 type Server struct {
@@ -64,8 +68,8 @@ type Server struct {
 func New(cfg Config) *Server {
 
 	srv := &Server{
-		chDone:   make(chan bool),
-		chReload: make(chan bool),
+		chDone:   make(chan bool, 1),
+		chReload: make(chan bool, 1),
 		C:        make(chan interface{}, cfg.Buffer),
 	}
 
@@ -103,41 +107,48 @@ func (srv *Server) Reload(cfg *Config) (err error) {
 		srv.cfg.MaxRecords = defaultMaxRecords
 	}
 
-	monadCfg := &monad.Config{
-		Min:            uint64(1),
-		Max:            uint64(srv.cfg.MaxWorkers),
-		Interval:       srv.cfg.Interval,
-		CoolDownPeriod: srv.cfg.CoolDownPeriod,
-		WarmFn: func() bool {
-			if srv.cliDesired == 0 {
-				return true
-			}
+	if srv.cfg.MaxWorkers > srv.cfg.MinWorkers {
+		monadCfg := &monad.Config{
+			Min:            uint64(1),
+			Max:            uint64(srv.cfg.MaxWorkers),
+			Interval:       srv.cfg.Interval,
+			CoolDownPeriod: srv.cfg.CoolDownPeriod,
+			WarmFn: func() bool {
+				if srv.cliDesired == 0 {
+					return true
+				}
 
-			l := float64(len(srv.C))
-			if l == 0 {
+				l := float64(len(srv.C))
+				if l == 0 {
+					return false
+				}
+
+				currPtc := (l / float64(cap(srv.C))) * 100
+
+				if currPtc > srv.cfg.ThresholdWarmUp*100 {
+					return true
+				}
 				return false
-			}
+			},
+			DesireFn: func(n uint64) {
+				srv.cliDesired = int(n)
+				select {
+				case srv.chReload <- true:
+				default:
+				}
+			},
+		}
 
-			currPtc := (l / float64(cap(srv.C))) * 100
-
-			if currPtc > srv.cfg.ThresholdWarmUp*100 {
-				return true
-			}
-			return false
-		},
-		DesireFn: func(n uint64) {
-			srv.cliDesired = int(n)
-			select {
-			case srv.chReload <- true:
-			default:
-			}
-		},
-	}
-
-	if srv.monad == nil {
-		srv.monad = monad.New(monadCfg)
+		if srv.monad == nil {
+			srv.monad = monad.New(monadCfg)
+		} else {
+			go srv.monad.Reload(monadCfg)
+		}
 	} else {
-		go srv.monad.Reload(monadCfg)
+		srv.cliDesired = srv.cfg.MaxWorkers
+		for len(srv.clients) < srv.cliDesired {
+			srv.clients = append(srv.clients, NewClient(srv))
+		}
 	}
 
 	log.Printf("Firehose config: %#v", srv.cfg)
@@ -150,10 +161,36 @@ func (srv *Server) Reload(cfg *Config) (err error) {
 	return nil
 }
 
+// Flush terminate all clients and close the channels
+func (srv *Server) Flush() (err error) {
+	srv.Lock()
+	defer srv.Unlock()
+
+	if srv.exiting {
+		return nil
+	}
+
+	for _, c := range srv.clients {
+		c.finish <- false // It will flush
+	}
+
+	for _, c := range srv.clients {
+		f := <-c.flushed
+		if !f {
+			return errors.New("Flushed failed")
+		}
+	}
+
+	return
+}
+
 // Exit terminate all clients and close the channels
 func (srv *Server) Exit() {
-
 	srv.Lock()
+	if srv.exiting {
+		srv.Unlock()
+		return
+	}
 	srv.exiting = true
 	srv.Unlock()
 
