@@ -67,6 +67,10 @@ type Server struct {
 // New create a pool of workers
 func New(cfg Config) *Server {
 
+	if cfg.Buffer == 0 {
+		cfg.Buffer = defaultBufferSize
+	}
+
 	srv := &Server{
 		chDone:   make(chan bool, 1),
 		chReload: make(chan bool, 1),
@@ -86,10 +90,6 @@ func (srv *Server) Reload(cfg *Config) (err error) {
 	defer srv.Unlock()
 
 	srv.cfg = *cfg
-
-	if srv.cfg.Buffer == 0 {
-		srv.cfg.Buffer = defaultBufferSize
-	}
 
 	if srv.cfg.MaxWorkers == 0 {
 		srv.cfg.MaxWorkers = defaultMaxWorkers

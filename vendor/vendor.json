@@ -327,16 +327,16 @@
 			"revisionTime": "2019-10-31T15:52:29Z"
 		},
 		{
-			"checksumSHA1": "2qyFhKa6Tcq4/t3GNojwkPVBnVM=",
+			"checksumSHA1": "ySbCzary14aURM+pkc6AuZCSZJQ=",
 			"path": "github.com/gabrielperezs/streamspooler/firehose",
-			"revision": "ee2adce85572d53e4bbc69d5917f5d29f1f787e2",
-			"revisionTime": "2019-10-31T15:52:29Z"
+			"revision": "209b2fbc9c90f2adbe0dba16265025c6cc9e3069",
+			"revisionTime": "2020-01-24T09:06:00Z"
 		},
 		{
-			"checksumSHA1": "g+JCbAbylL8/2xObFyT1zYNlL/A=",
+			"checksumSHA1": "B9kX5kfj9nUE29M1pRmUhJjjGiY=",
 			"path": "github.com/gabrielperezs/streamspooler/kinesis",
-			"revision": "529285c62b981393a2eab6c84bbc97f2ee90dce1",
-			"revisionTime": "2018-11-06T19:02:19Z"
+			"revision": "209b2fbc9c90f2adbe0dba16265025c6cc9e3069",
+			"revisionTime": "2020-01-24T09:06:00Z"
 		},
 		{
 			"checksumSHA1": "ZyT626CZbiQTaiapDmNPiGi6BmI=",
