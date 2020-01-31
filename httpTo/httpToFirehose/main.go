@@ -137,7 +137,10 @@ func (srv *Server) ok(ctx *fasthttp.RequestCtx) {
 }
 
 func (srv *Server) submitRaw(ctx *fasthttp.RequestCtx) {
-	srv.sendBytes(ctx.Request.Body()) // Does not check if the data is a valid json.
+	// fasthttp: The returned value in Bytes() is valid until RequestHandler return.
+	// we copy the slice of bytes to send to firehose
+	b := append([]byte{}, ctx.Request.Body()...)
+	srv.sendBytes(b) // Does not check if the data is a valid json.
 
 	ctx.SetContentType("application/json")
 	ctx.SetStatusCode(fasthttp.StatusOK)
