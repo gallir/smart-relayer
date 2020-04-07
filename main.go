@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/gallir/smart-relayer/httpTo/httpToFirehose"
 	"log"
-	"log/syslog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -32,13 +31,13 @@ const (
 )
 
 var (
-	mutex          sync.Mutex
-	relayers       = make(map[string]lib.Relayer)
-	totalRelayers  = 0
-	relayersConfig *lib.Config
-	done           = make(chan bool)
-	reloadSig      = make(chan os.Signal, 1)
-	exitSig        = make(chan os.Signal, 1)
+	mutex         sync.Mutex
+	relayers      = make(map[string]lib.Relayer)
+	totalRelayers = 0
+	//relayersConfig *lib.Config
+	done = make(chan bool)
+	//reloadSig      = make(chan os.Signal, 1)
+	//exitSig        = make(chan os.Signal, 1)
 )
 
 func getNewServer(conf lib.RelayerConfig) (srv lib.Relayer, err error) {
@@ -133,52 +132,19 @@ func startOrReload() bool {
 }
 
 func main() {
-
-	// Force a high number of file descriptoir, if possible
-	var rLimit syscall.Rlimit
-	e := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-	if e == nil {
-		rLimit.Cur = 65536
-		syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-	}
-
+	setRLimit()
 	// Show version and exit
 	if lib.GlobalConfig.ShowVersion {
 		fmt.Println("smart-relayer version", version)
-		fmt.Printf("Max files %d/%d\n", rLimit.Cur, rLimit.Max)
+		showRLimit()
 		os.Exit(0)
 	}
 
 	if !lib.GlobalConfig.Debug {
-		logwriter, e := syslog.New(syslog.LOG_INFO|syslog.LOG_USER, "smart-relayer")
-		if e == nil {
-			log.SetFlags(0)
-			log.SetOutput(logwriter)
-		}
+		initLogging("smart-relayer")
 	}
 
-	// Listen for reload signals
-	signal.Notify(reloadSig, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
-	signal.Notify(exitSig, syscall.SIGINT, syscall.SIGKILL, os.Interrupt, syscall.SIGTERM)
-
-	// Reload config
-	go func() {
-		for {
-			_ = <-reloadSig
-			startOrReload()
-		}
-	}()
-
-	// Exit
-	go func() {
-		for {
-			s := <-exitSig
-			log.Printf("Signal %d received, exiting", s)
-			for _, r := range relayers {
-				r.Exit()
-			}
-		}
-	}()
+	go signals()
 
 	if !startOrReload() {
 		os.Exit(1)
@@ -188,4 +154,19 @@ func main() {
 		<-done
 	}
 	os.Exit(0)
+}
+
+func signals() {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGHUP, os.Interrupt)
+	for s := range sigs {
+		switch s {
+		case syscall.SIGHUP:
+			startOrReload()
+		default:
+			for _, r := range relayers {
+				r.Exit()
+			}
+		}
+	}
 }
