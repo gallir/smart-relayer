@@ -3,11 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/gallir/smart-relayer/httpTo/httpToFirehose"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/gallir/smart-relayer/httpTo/httpToFirehose"
 
 	libdebug "runtime/debug"
 
@@ -27,7 +30,7 @@ import (
 )
 
 const (
-	version = "8.8.8"
+	version = "8.8.9"
 )
 
 var (
@@ -132,6 +135,13 @@ func startOrReload() bool {
 }
 
 func main() {
+
+	if lib.GlobalConfig.Pprof > 0 {
+		go func() {
+			log.Println(http.ListenAndServe(fmt.Sprintf(":%d", lib.GlobalConfig.Pprof), nil))
+		}()
+	}
+
 	setRLimit()
 	// Show version and exit
 	if lib.GlobalConfig.ShowVersion {
