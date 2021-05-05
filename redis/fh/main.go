@@ -49,6 +49,7 @@ var (
 func init() {
 	commands = map[string]*redis.Resp{
 		"PING":   respOK,
+		"GET":    respOK,
 		"MULTI":  respOK,
 		"EXEC":   respOK,
 		"SET":    respOK,
