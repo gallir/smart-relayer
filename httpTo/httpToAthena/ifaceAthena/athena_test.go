@@ -38,7 +38,7 @@ func TestAthena1(t *testing.T) {
 
 	for {
 
-		rows, nextToken, err = srv.Read(queryExecutionID, nextToken)
+		rows, nextToken, err = srv.Read(queryExecutionID, nextToken, 10)
 		if err != nil {
 			t.Error(err)
 			return
