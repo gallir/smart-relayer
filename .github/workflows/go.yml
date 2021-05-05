@@ -1,0 +1,76 @@
+name: Build smart-relayer
+
+on:
+  push:
+    tags:
+      - "v*"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set output
+        id: vars
+        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+
+      - name: Build windows
+        run: |
+          GOOS=windows GOARCH=amd64 go build -o smart-relayer.exe
+
+      - name: Build linux amd64
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o smart-relayer_amd64 -ldflags '-w -s'
+
+      - name: Build linux arm64
+        run: |
+          GOOS=linux GOARCH=arm64 go build -o smart-relayer_arm64 -ldflags '-w -s'
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Upload linux amd64 Release Asset
+        id: upload-release-asset1
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./smart-relayer_amd64
+          asset_name: smart-relayer_amd64
+          asset_content_type: application/binary
+
+      - name: Upload linux arm64 Release Asset
+        id: upload-release-asset1
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./smart-relayer_arm64
+          asset_name: smart-relayer_arm64
+          asset_content_type: application/binary
+
+      - name: Upload windows Release Asset
+        id: upload-release-asset3
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./smart-relayer.exe
+          asset_name: smart-relayer.exe
+          asset_content_type: application/binary

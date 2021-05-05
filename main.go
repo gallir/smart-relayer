@@ -3,11 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/gallir/smart-relayer/httpTo/httpToFirehose"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/gallir/smart-relayer/httpTo/httpToFirehose"
 
 	libdebug "runtime/debug"
 
@@ -27,7 +28,7 @@ import (
 )
 
 const (
-	version = "8.8.8"
+	version = "8.8.9"
 )
 
 var (

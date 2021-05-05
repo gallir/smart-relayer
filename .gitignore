@@ -1,4 +1,7 @@
 *.test
+config.conf
 example/example
 smart-relayer
-
+smart-relayer_amd64
+smart-relayer_arm64
+smart-relayer.exe
