@@ -4,7 +4,9 @@ import (
 	"errors"
 	"log"
 	"net"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	firehosePool "github.com/gabrielperezs/streamspooler/firehose"
@@ -23,6 +25,8 @@ type Server struct {
 	fh             *firehosePool.Server
 	lastConnection time.Time
 	lastError      time.Time
+
+	ignoreCommands atomic.Value
 }
 
 const (
@@ -39,6 +43,7 @@ var (
 	errBadCmd      = errors.New("ERR bad command")
 	errKO          = errors.New("fatal error")
 	errOverloaded  = errors.New("Redis overloaded")
+	respPong       = redis.NewRespSimple("PONG")
 	respOK         = redis.NewRespSimple("OK")
 	respTrue       = redis.NewResp(1)
 	respBadCommand = redis.NewResp(errBadCmd)
@@ -48,7 +53,6 @@ var (
 
 func init() {
 	commands = map[string]*redis.Resp{
-		"PING":   respOK,
 		"GET":    respOK,
 		"MULTI":  respOK,
 		"EXEC":   respOK,
@@ -75,10 +79,22 @@ func New(c lib.RelayerConfig, done chan bool) (*Server, error) {
 
 // Reload the configuration
 func (srv *Server) Reload(c *lib.RelayerConfig) (err error) {
+
+	// Config struct for the firehose plugin
 	srv.Lock()
 	defer srv.Unlock()
 
 	srv.config = *c
+
+	// Ignore commands store as an atomic value
+	ignore := make(map[string]*redis.Resp)
+	if srv.config.IgnoreCommands != "" {
+		for _, s := range strings.Split(srv.config.IgnoreCommands, " ") {
+			ignore[strings.ToUpper(s)] = respOK
+		}
+	}
+	log.Printf("DEBUG IgnoreCommands: %s | %v", srv.config.IgnoreCommands, ignore)
+	srv.ignoreCommands.Store(ignore)
 
 	if srv.config.MaxConnections <= 0 {
 		srv.config.MaxConnections = maxConnections
@@ -200,6 +216,9 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 		}
 	}()
 
+	var ignoreCommands map[string]*redis.Resp
+	ignoreCommands, _ = srv.ignoreCommands.Load().(map[string]*redis.Resp)
+
 	for {
 
 		r := reader.Read()
@@ -228,12 +247,32 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			continue
 		}
 
-		if req.Command == "ECHO" {
+		// Just return, without other effect
+		if ignoreCommand, ok := ignoreCommands[req.Command]; ok {
+			ignoreCommand.WriteTo(netCon)
+			lib.Debugf("DEBUG ignore command: %#v", r.String())
+			continue
+		}
+
+		// Warning, the following switch case block needs to have a "continue"
+		// after writing to netConn
+		switch req.Command {
+		case "ECHO":
 			if len(req.Items) == 2 {
 				req.Items[1].WriteTo(netCon)
 			} else {
 				respBadCommand.WriteTo(netCon)
 			}
+			continue
+		case "PING":
+			if len(req.Items) == 2 {
+				req.Items[1].WriteTo(netCon)
+			} else {
+				respPong.WriteTo(netCon)
+			}
+			continue
+		case "EXISTS":
+			respTrue.WriteTo(netCon)
 			continue
 		}
 
@@ -242,8 +281,9 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			respBadCommand.WriteTo(netCon)
 			continue
 		}
-
 		fastResponse.WriteTo(netCon)
+
+		lib.Debugf("DEBUG fastResponse command: %#v", req)
 
 		switch req.Command {
 		case "RAWSET":
@@ -264,7 +304,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			multi = false
 			srv.sendRecord(row)
 		case "SET", "CSET":
-			if len(req.Items) < 2 {
+			if len(req.Items) < 3 {
 				lib.Debugf("Error, bad number of arguments %#v", r.String())
 				continue
 			}
@@ -285,7 +325,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 				srv.sendRecord(row)
 			}
 		case "SADD", "CSADD":
-			if len(req.Items) < 2 {
+			if len(req.Items) < 3 {
 				lib.Debugf("Error, bad number of arguments %#v", r.String())
 				continue
 			}
@@ -310,7 +350,7 @@ func (srv *Server) handleConnection(netCon net.Conn) {
 			var k string
 			var v interface{}
 
-			if len(req.Items) < 2 {
+			if len(req.Items) < 3 {
 				lib.Debugf("Error, bad number of arguments %#v", r.String())
 				continue
 			}

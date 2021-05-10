@@ -55,7 +55,8 @@ type RelayerConfig struct {
 	Writers         int // Writers BY shard (each shard will have the number of workers defined here)
 	BreakMultiplier int // Limit to declare as failing. Total writes plus this value
 
-	AsynCommands string
+	AsynCommands   string
+	IgnoreCommands string // All commands included here are going to be answer as "1"
 }
 
 func ReadConfig(filename string) (config *Config, err error) {
