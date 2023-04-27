@@ -2,7 +2,7 @@ package httpToAthena
 
 import (
 	"context"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -99,7 +99,7 @@ func (srv *Server) Exit() {
 }
 
 func (srv *Server) query(ctx *gin.Context) {
-	b, err := ioutil.ReadAll(ctx.Request.Body)
+	b, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
 		ctx.String(http.StatusBadRequest, err.Error())
 		return

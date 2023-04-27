@@ -113,7 +113,13 @@ func (a *Athena) Read(queryExecutionId string, nextToken string, maxResults int6
 		return newLines, "", nil
 	}
 
-	for _, r := range results.ResultSet.Rows[1:] {
+	// only skip the header if this is not a query for the next page
+	startFrom := 1
+	if nextToken != "" {
+		startFrom = 0
+	}
+
+	for _, r := range results.ResultSet.Rows[startFrom:] {
 		line := make(map[string]string, colLen)
 		for i, d := range r.Data {
 			if results.ResultSet.ResultSetMetadata.ColumnInfo[i].Name == nil {
